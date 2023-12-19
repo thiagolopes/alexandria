@@ -24,7 +24,9 @@ def process_download(website):
     domain = urlp.hostname
     a_print(f"Making a mirror of: {website} at {domain}")
 
-    wget_process = (f"wget --recursive --page-requisites --adjust-extension --span-hosts"
+    wget_process = (f"wget --recursive -l 1--page-requisites --adjust-extension --span-hosts"
+                    f" -U 'Mozilla'"
+                    f" -e robots=off --random-wait --no-cookies"
                     f" --convert-links --restrict-file-names=windows --domains {domain}"
                     f" --no-parent {website}".split(" "))
     subprocess.run(wget_process)
