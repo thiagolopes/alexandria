@@ -72,14 +72,25 @@ def server(port):
             exit(EXIT_SUCCESS)
 
 def create_index():
-    html_contet = """
-    <html>
-    <head> hi! </head>
-    <body>
-    hello world!
-    </body>
-    </html>
-    """
+    html_contet ="""<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>My Website</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="icon" href="./favicon.ico" type="image/x-icon">
+  </head>
+  <body>
+    <main>
+        <h1>Welcome to Alexandria</h1>
+        <h2>Your private libary</h2>
+    </main>
+	<script src="index.js"></script>
+  </body>
+</html>"""
+
     with open("index.html", "w") as index:
         index.writelines(html_contet)
 
