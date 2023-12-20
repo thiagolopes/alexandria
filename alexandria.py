@@ -11,16 +11,17 @@ from urllib.parse import urlparse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 DEFAULT_PORT = 8000
+DEBUG = True
+EXIT_SUCCESS = 0
+BORDER_PRINT = "*" * 8
+LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
+KB = 1024
+
 parser = argparse.ArgumentParser(prog="Alexandria",
                                  description="Alexandria library is a tool to make backup of a website and manage",
                                  epilog="Keep and hold")
 parser.add_argument("website", help="An internet link", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
-
-DEBUG = True
-EXIT_SUCCESS = 0
-BORDER_PRINT = "*" * 8
-LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 
 def debug_print(*args):
     if DEBUG:
@@ -32,9 +33,6 @@ def a_print(*objects):
     print(*objects, end="")
     print(" " + BORDER_PRINT)
 
-def todo():
-    a_print("TODO!!!")
-
 def process_download(website):
     urlp = urlparse(website)
     if not bool(urlp.scheme):
@@ -44,8 +42,8 @@ def process_download(website):
     domain = urlp.hostname
     a_print(f"Making a mirror of: {website} at {domain}")
 
-    wget_process = (f"wget --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
-                    f" -U 'Mozilla'"
+    wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
+                    f" -U 'Mozilla' -E -k"
                     f" -e robots=off --random-wait --no-cookies"
                     f" --convert-links --restrict-file-names=windows --domains {domain}"
                     f" --no-parent {website}".split(" "))
@@ -82,11 +80,14 @@ def server(port):
             exit(EXIT_SUCCESS)
 
 def create_index(table):
-    svg_logo = """
-<svg fill="#000000" height="100px" width="100px" version="1.1"
-    id="Capa_1" xmlns="http://www.w3.org/2000/svg"
-    xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 425.45 425.45" xml:space="preserve">
-<path d="M267.087,74.755c6.359,3.934,13.87,6.261,21.68,6.261c22.346,0,40.525-18.18,40.525-40.525
+    svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+<circle cx='50' cy='50' r='50'/>
+</svg>"""
+
+    svg_logo = """<svg height='80px' width='80px' version='1.1'
+id='Capa_1' xmlns='http://www.w3.org/2000/svg'
+xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 425.45 425.45' xml:space='preserve'>
+<path d='M267.087,74.755c6.359,3.934,13.87,6.261,21.68,6.261c22.346,0,40.525-18.18,40.525-40.525
 c0-21.746-17.219-39.54-38.737-40.48c-0.147-0.015-155.511-0.015-155.658,0C113.378,0.95,96.159,18.744,96.159,40.49
 c0,22.346,18.18,40.525,40.525,40.525c7.808,0,15.316-2.326,21.674-6.257c1.983,1.021,5.213,3.324,7.049,8.021v231.248
 c-8.989,0.339-16.203,7.737-16.203,16.808c0,7.593,5.054,14.021,11.973,16.115c0.516,0.346,1.097,0.601,1.734,0.709
@@ -123,7 +124,7 @@ c-0.001,0.003,0,0.006-0.001,0.009c0,0.003-0.001,0.005-0.001,0.008c-1.653,13.478-
 c-17.383,0-31.525-14.143-31.525-31.525c0-17.37,14.122-31.503,31.487-31.524h9.869c7.874,0.301,15.941,3.315,26.148,9.77
 c15.835,10.017,25.536,11.79,40.03,11.796h0.066c14.494-0.006,24.195-1.779,40.03-11.796c10.205-6.456,18.272-9.47,26.146-9.77
 h9.869c17.365,0.021,31.487,14.154,31.487,31.524c0,17.383-14.142,31.525-31.525,31.525
-C273.766,72.016,259.696,60.63,258.043,47.153z"/>
+C273.766,72.016,259.696,60.63,258.043,47.153z'/>
 </svg>"""
 
     css = """
@@ -227,6 +228,7 @@ path {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <link rel="icon" href="data:image/svg+xml;utf8,{svg_icon}" />
     <title>Alexandria - Home</title>
     <style>
     {css}
@@ -257,6 +259,8 @@ path {
     with open("index.html", "w", encoding="utf-8") as index:
         index.writelines(html_contet)
 
+def humanize_kb(kb):
+    return "{num:3.3f} KiB".format(num = (kb // KB) / KB)
 
 class WebsiteMirror:
     title_re = re.compile(r"<title.*?>(.+?)</title>")
@@ -264,7 +268,7 @@ class WebsiteMirror:
     def __init__(self, url, created_at=None):
         self.url = url
         self.path = self.path_from_url(url)
-        self.title = self.grep_title_from_file(self.path)
+        self.title = self.grep_title_from_file()
         self.size = self.calculate_size_disk(self.path.split("/")[0])
 
         if created_at is None:
@@ -273,7 +277,6 @@ class WebsiteMirror:
         else:
             debug_print(f"Reloaded - {self.url}")
             self.created_at = created_at
-
 
     def __hash__(self):
         return hash(self.url)
@@ -288,21 +291,29 @@ class WebsiteMirror:
         return self.url
 
     def path_from_url(self, url):
-        p = urlparse(url)
-        return p.netloc + p.path
+        url = urlparse(url)
+        path = url.netloc + url.path
 
-    def grep_title_from_file(self, path):
+        if path[-1] == "/":
+            path = path[:-1]
+
+        possibles_files = [Path(path + p) for p in ["", ".html", "/index.html"]]
+        for f in possibles_files:
+            if f.is_file():
+                return str(f)
+
+        assert False, "unreachable - cound not determinate the html file"
+
+    def grep_title_from_file(self):
         file_text = ""
-        # BUG index.html is not constant...
-        with open(path + "/index.html", "r") as f:
+        with open(self.path, "r") as f:
             for l in f.readlines():
                 file_text += l
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
 
-        assert False
-        return "unreach!"
+        assert False, "unreachable - do not found title in the html"
 
     def calculate_size_disk(self, path):
         total = 0
@@ -316,17 +327,17 @@ class WebsiteMirror:
 
     def to_html(self):
         human_date = self.created_at.strftime("%A, %d. %B %Y %I:%M%p")
-        human_size = (self.size // 1024) / 1024 # TODO move me
+        human_size = humanize_kb(self.size)
         return f"""<tr>
             <td><a href="{self.path}">{self.url}</a></td>
             <td>{self.title}</td>
-            <td>{human_size} MiB</td>
+            <td>{human_size}</td>
             <td>{human_date}</td>
             </tr>"""
 
     @classmethod
     def from_mirror(cls, other):
-        # Regenerate mirror from other mirror
+        # Re-crate mirror from other mirror
         return cls(other.url, other.created_at)
 
 class MirrorsFile():
@@ -346,6 +357,9 @@ class MirrorsFile():
         debug_print("MirrorsFile loaded!")
         debug_print(f"Mirrors: {self.data}")
 
+    def __iter__(self):
+        return self.data.__iter__()
+
     @classmethod
     def init_if_need(cls, path):
         file_disk = Path(path)
@@ -354,12 +368,13 @@ class MirrorsFile():
                 pickle.dump(cls.default(), f, pickle.HIGHEST_PROTOCOL)
 
     def to_html(self):
-        todo() # TODO generate all table here;
         return " ".join(m.to_html() for m in self.data)
 
     def add(self, mirror):
-        self.data.append(mirror)
-        self.data = list(dict.fromkeys(self.data))
+        if mirror not in self.data:
+            self.data.append(mirror)
+        else:
+            a_print(f"Skip add {mirror.url}, already in")
 
     def save(self):
         # keeps its overwriting, redo keeping writing and append if it get wrost
@@ -377,7 +392,9 @@ if __name__ == "__main__":
         create_index(mirrors.to_html()) # TODO generate index for each request, need overwrite simplehttphandler
         server(port)
 
-    process_download(website)
+    if WebsiteMirror(website) not in mirrors:
+        process_download(website)
+
     mirror = WebsiteMirror(website)
     mirrors.add(mirror)
     mirrors.save()
