@@ -1,12 +1,18 @@
+import html
+import re
+from datetime import datetime
+from pathlib import Path
+import pickle
 import argparse
 import subprocess
 import sys
+import os
 from urllib.parse import urlparse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 parser = argparse.ArgumentParser(prog="Alexandria",
                                  description="Alexandria library is a tool to make backup"
-                                 " of a website and manage as your personal flavour",
+                                 " of a website and manage as a index",
                                  epilog="Keep and hold")
 parser.add_argument("website")
 
@@ -24,6 +30,10 @@ def a_print(*objects):
     print(BORDER + " ", end="")
     print(*objects, end="")
     print(" " + BORDER)
+
+if DEBUG:
+    def todo():
+        a_print("TODO!!!")
 
 def process_download(website):
     urlp = urlparse(website)
@@ -71,37 +81,179 @@ def server(port):
             a_print("bye bye!")
             exit(EXIT_SUCCESS)
 
-def create_index():
-    html_contet ="""<!DOCTYPE html>
+def create_index(table):
+    css = """
+table,
+td {
+  border: 1px solid #333;
+}
+
+thead,
+tfoot {
+  background-color: #333;
+  color: #fff;
+}
+
+
+    """
+    html_contet =f"""<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>My Website</title>
-    <link rel="stylesheet" href="./style.css">
-    <link rel="icon" href="./favicon.ico" type="image/x-icon">
+    <title>Alexandria - Home</title>
+    <style>
+    {css}
+    </style>
   </head>
   <body>
     <main>
         <h1>Welcome to Alexandria</h1>
-        <h2>Your private libary</h2>
+        <h2>Your private library</h2>
+
+        <hr />
+
+        <table>
+          <tr>
+            <th>URL</th>
+            <th>Title</th>
+            <th>Size</th>
+            <th>Created at</th>
+          </tr>
+          {table}
+        </table>
+
     </main>
 	<script src="index.js"></script>
   </body>
 </html>"""
 
-    with open("index.html", "w") as index:
+    with open("index.html", "w", encoding="utf-8") as index:
         index.writelines(html_contet)
+
+
+class WebsiteMirror:
+    title_re = re.compile(r"<title.*?>(.+?)</title>")
+
+    def __init__(self, url, dt=None):
+        self.url = url
+        self.path = self.path_from_url(url)
+        self.title = self.grep_title_from_file(self.path)
+        self.size = self.calculate_size_disk(self.path.split("/")[0])
+
+        if dt is None:
+            debug_print(f"Generated - {self.url}")
+            self.created_at = datetime.now()
+        else:
+            debug_print(f"Reloaded - {self.url}")
+            self.created_at = dt
+
+
+    def __hash__(self):
+        return hash(self.url)
+
+    def __eq__(self, other):
+        return other.url == self.url
+
+    def __repr__(self):
+        return f"<Mirror url={self.url}>"
+
+    def __str__(self):
+        return self.url
+
+    def path_from_url(self, url):
+        p = urlparse(url)
+        return p.netloc + p.path
+
+    def grep_title_from_file(self, path):
+        file_text = ""
+        # BUG index.html is not constant...
+        with open(path + "/index.html", "r") as f:
+            for l in f.readlines():
+                file_text += l
+                f = self.title_re.search(file_text)
+                if f:
+                    return html.unescape(f.groups()[0])
+
+        assert False
+        return "unreach!"
+
+    def calculate_size_disk(self, path):
+        total = 0
+        with os.scandir(path) as f:
+            for e in f:
+                if e.is_dir():
+                    total += self.calculate_size_disk(e.path)
+                if e.is_file():
+                    total += e.stat().st_size
+        return total
+
+    def to_html(self):
+        human_date = self.created_at.strftime("%A, %d. %B %Y %I:%M%p")
+        human_size = (self.size // 1024) / 1024 # TODO move me
+        return f"""<tr>
+            <td><a href="{self.path}">{self.url}</a></td>
+            <td>{self.title}</td>
+            <td>{human_size} MiB</td>
+            <td>{human_date}</td>
+            </tr>"""
+
+    @classmethod
+    def from_mirror(cls, other):
+        # Regenerate mirror from other mirror
+        return cls(other.url, other.created_at)
+
+class MirrorsFile():
+    default = list
+
+    def __init__(self, path):
+        self.path = path
+        self.init_if_need(path)
+
+        with open(path, "rb") as f:
+            mirrors_file = pickle.load(f)
+
+        self.data = self.default()
+        for mirror in mirrors_file:
+            self.add(WebsiteMirror.from_mirror(mirror))
+
+        debug_print("MirrorsFile loaded!")
+        debug_print(f"Mirrors: {self.data}")
+
+    @classmethod
+    def init_if_need(cls, path):
+        file_disk = Path(path)
+        if not file_disk.exists():
+            with open(path, "wb") as f:
+                pickle.dump(cls.default(), f, pickle.HIGHEST_PROTOCOL)
+
+    def to_html(self):
+        todo() # TODO generate all table here;
+        return " ".join(m.to_html() for m in self.data)
+
+    def add(self, mirror):
+        self.data.append(mirror)
+        self.data = list(dict.fromkeys(self.data))
+
+    def save(self):
+        # keeps its overwriting, redo keeping writing and append if it get wrost
+        with open(self.path, "wb") as f:
+            pickle.dump(self.data, f, pickle.HIGHEST_PROTOCOL)
 
 PORT = 8000
 if __name__ == "__main__":
+    mirrors = MirrorsFile("data")
+
     # not args - run server
     if not sys.argv[1:]:
-        create_index()
+        create_index(mirrors.to_html()) # TODO generate index for each request, need overwrite simplehttphandler
         server(PORT)
 
     args = parser.parse_args()
     website = args.website
 
     process_download(website)
+    mirror = WebsiteMirror(website)
+    mirrors.add(mirror)
+    mirrors.save()
