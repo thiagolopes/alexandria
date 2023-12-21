@@ -7,11 +7,10 @@ import subprocess
 import sys
 from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
-DATABASE_URL = "./data"
+DATABASE_URL = "./database"
 DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = True
@@ -25,6 +24,10 @@ parser = argparse.ArgumentParser(prog="Alexandria",
                                  epilog="Keep and hold")
 parser.add_argument("website", help="An internet link", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
+parser.add_argument("-l", "--list", help="List database websites without server", default=None)
+
+def clear_stdout():
+    print(chr(27) + "[2J")
 
 def debug_print(*args):
     if DEBUG:
@@ -227,6 +230,11 @@ path {
   </body>
 </html>"""
 
+    def do_POST(self):
+        a_print("POST!!!")
+        self.send_response(201)
+        self.end_headers()
+
     def do_GET(self):
         handler = MirrorsFile(DATABASE_URL).to_html
 
@@ -246,34 +254,33 @@ path {
                                          svg_logo=self.svg_logo,
                                          table=table)
 
-def try_open_link(link):
-    try:
-        subprocess.run(["xdg-open", link])
-    except FileNotFoundError:
-        pass
-
 def serve(port):
     server = HTTPServerAlexandria
+    a_print(f"Start server at {port}")
+    link = f"http://localhost:{port}"
+    a_print(LINK_MASK.format(link, f"http://localhost:{port}"))
+
+    # TODO implement router to be possible implement other http actions - aka: new url from webpage
+    # Router({"/": {"GET": index_page, "POST": reg_mirror}
+    #         "/tags" {"POST": reg_tag}})
+    # server = HttpServerAlexandria(router)
+    # with server(port) as httpd:
+    #     httpd.serve_forever()
 
     with HTTPServer(("", port), server) as httpd:
-        a_print(f"Start server at {port}")
-
-        link = f"http://localhost:{port}"
-        a_print(LINK_MASK.format(link, f"http://localhost:{port}"))
-        try_open_link(link)
-
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print(chr(27) + "[2J")
-            a_print("bye bye!")
+            clear_stdout()
+            a_print(f"Alexandria server:{port} ended!")
             sys.exit(EXIT_SUCCESS)
 
 def humanize_size(num):
     units = ("KiB", "MiB", "GiB")
+    limit_to_nex_unit = 1000
     for u in units:
         num /= KB
-        if num > 1000:
+        if num > limit_to_nex_unit:
             continue
         break
     return "{num:3.1f} {u} ".format(num = num, u = u)
@@ -313,6 +320,11 @@ class WebsiteMirror:
     def __str__(self):
         return self.url
 
+    @classmethod
+    def from_mirror(cls, other):
+        # Re-crate mirror from other mirror
+        return cls(other.url, other.created_at)
+
     def path_from_url(self, url):
         url = urlparse(url)
         path = url.netloc + url.path
@@ -324,7 +336,6 @@ class WebsiteMirror:
         for f in possibles_files:
             if f.is_file():
                 return str(f)
-
         assert False, "unreachable - cound not determinate the html file"
 
     def grep_title_from_file(self):
@@ -335,7 +346,6 @@ class WebsiteMirror:
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
-
         assert False, "unreachable - do not found title in the html"
 
     def calculate_size_disk(self, path):
@@ -359,17 +369,12 @@ class WebsiteMirror:
             <td>{date}</td>
             </tr>"""
 
-    @classmethod
-    def from_mirror(cls, other):
-        # Re-crate mirror from other mirror
-        return cls(other.url, other.created_at)
-
 class MirrorsFile():
     default = list
 
     def __init__(self, path):
         self.path = path
-        self.init_if_need(path)
+        self.initial_migration_if_need(path)
 
         with open(path, "rb") as f:
             mirrors_file = pickle.load(f)
@@ -377,16 +382,16 @@ class MirrorsFile():
         self.data = self.default()
         for mirror in mirrors_file:
             self.add(WebsiteMirror.from_mirror(mirror))
-
         debug_print(f"MirrorsFile loaded! -  {self.data}")
 
     def __iter__(self):
         return self.data.__iter__()
 
     @classmethod
-    def init_if_need(cls, path):
+    def initial_migration_if_need(cls, path):
         file_disk = Path(path)
         if not file_disk.exists():
+            debug_print("Initial migration done!")
             with open(path, "wb") as f:
                 pickle.dump(cls.default(), f, pickle.HIGHEST_PROTOCOL)
 
@@ -411,6 +416,7 @@ if __name__ == "__main__":
 
     if not website:
         serve(port)
+        sys.exit(EXIT_SUCCESS)
 
     process_download(website)
     mirror = WebsiteMirror(website)

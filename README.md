@@ -3,7 +3,7 @@ Website Mirroring; Create your personal Alexandria library from Internet
 
 ![image](https://github.com/thiagolopes/alexandria/assets/5994972/642f4c31-8253-46ef-bcd7-d347c6cee742)
 
-# How to use
+# How to run:
 To run the server:
 ```
 python alexandria.py
