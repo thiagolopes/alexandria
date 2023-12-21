@@ -247,7 +247,7 @@ path {
 
 def try_open_link(link):
     try:
-        subprocess.run(["xdg-open", link], capture_output=True, check=True)
+        subprocess.run(["xdg-open", link])
     except FileNotFoundError:
         pass
 
