@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 DATABASE_URL = "./data"
+DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = True
 EXIT_SUCCESS = 0
@@ -54,7 +55,7 @@ def process_download(url):
     subprocess.run(wget_process)
     a_print(f"Finished {url}!!!")
 
-class MirrorHandler(SimpleHTTPRequestHandler):
+class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
 <circle cx='50' cy='50' r='50'/>
 </svg>"""
@@ -251,10 +252,10 @@ def try_open_link(link):
     except FileNotFoundError:
         pass
 
-def server(port):
-    server_handler = MirrorHandler
+def serve(port):
+    server = HTTPServerAlexandria
 
-    with HTTPServer(("", port), server_handler) as httpd:
+    with HTTPServer(("", port), server) as httpd:
         a_print(f"Start server at {port}")
 
         link = f"http://localhost:{port}"
@@ -268,8 +269,21 @@ def server(port):
             a_print("bye bye!")
             sys.exit(EXIT_SUCCESS)
 
-def humanize_kb(kb):
-    return "{num:3.1f} KiB".format(num = (kb / KB))
+def humanize_size(num):
+    units = ("KiB", "MiB", "GiB")
+    for u in units:
+        num /= KB
+        if num > 1000:
+            continue
+        break
+    return "{num:3.1f} {u} ".format(num = num, u = u)
+
+def humanize_url(url):
+    # TODO truncate if needed
+    return url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
+
+def humanize_datetime(dt):
+    return dt.strftime(DATETIME_FMT)
 
 class WebsiteMirror:
     title_re = re.compile(r"<title.*?>(.+?)</title>")
@@ -335,13 +349,14 @@ class WebsiteMirror:
         return total
 
     def to_html(self):
-        human_date = self.created_at.strftime("%A, %d. %B %Y %I:%M%p")
-        human_size = humanize_kb(self.size)
+        date = humanize_datetime(self.created_at)
+        size = humanize_size(self.size)
+        url =  humanize_url(self.url)
         return f"""<tr>
-            <td><a href="{self.path}">{self.url}</a></td>
+            <td><a href="{self.path}">{url}</a></td>
             <td>{self.title}</td>
-            <td>{human_size}</td>
-            <td>{human_date}</td>
+            <td>{size}</td>
+            <td>{date}</td>
             </tr>"""
 
     @classmethod
@@ -395,7 +410,7 @@ if __name__ == "__main__":
     port = int(args.port)
 
     if not website:
-        server(port)
+        serve(port)
 
     process_download(website)
     mirror = WebsiteMirror(website)
