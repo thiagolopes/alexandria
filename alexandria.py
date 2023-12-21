@@ -1,17 +1,19 @@
-import html
-import re
-from datetime import datetime
-from pathlib import Path
-import pickle
 import argparse
+import html
+import os
+import pickle
+import re
 import subprocess
 import sys
-import os
-from urllib.parse import urlparse
+from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import urlparse
 
+DATABASE_URL = "./data"
 DEFAULT_PORT = 8000
-DEBUG = True
+DEBUG = False
 EXIT_SUCCESS = 0
 BORDER_PRINT = "*" * 8
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
@@ -33,57 +35,29 @@ def a_print(*objects):
     print(*objects, end="")
     print(" " + BORDER_PRINT)
 
-def process_download(website):
-    urlp = urlparse(website)
+def process_download(url):
+    urlp = urlparse(url)
     if not bool(urlp.scheme):
-        a_print("Not valid website")
-        exit(EXIT_SUCCESS)
+        a_print(f"Not valid url - {url}")
+        sys.exit(EXIT_SUCCESS)
 
     domain = urlp.hostname
-    a_print(f"Making a mirror of: {website} at {domain}")
+    a_print(f"Making a mirror of: {url} at {domain}")
 
     wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
                     f" -U 'Mozilla' -E -k"
                     f" -e robots=off --random-wait --no-cookies"
                     f" --convert-links --restrict-file-names=windows --domains {domain}"
-                    f" --no-parent {website}".split(" "))
+                    f" --no-parent {url}".split(" "))
+
     debug_print("command: {}".format(" ".join(wget_process)))
+    subprocess.run(wget_process, check=True)
+    a_print(f"Finished {url}!!!")
 
-    try:
-        subprocess.run(wget_process, check=True)
-    except subprocess.CalledProcessError as err:
-        a_print(f"Error on {website} :( ")
-    else:
-        a_print(f"Finished {website}!!!")
-
-def try_open_link(link):
-    try:
-        subprocess.run(["xdg-open", link], capture_output=True)
-    except FileNotFoundError:
-        pass
-
-def server(port):
-    server_handler = SimpleHTTPRequestHandler
-
-    with HTTPServer(("", port), server_handler) as httpd:
-        a_print(f"Start server at {port}")
-
-        link = f"http://localhost:{port}"
-        a_print(LINK_MASK.format(link, f"http://localhost:{port}"))
-        try_open_link(link)
-
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print()
-            a_print("bye bye!")
-            exit(EXIT_SUCCESS)
-
-def create_index(table):
+class MirrorHandler(SimpleHTTPRequestHandler):
     svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
 <circle cx='50' cy='50' r='50'/>
 </svg>"""
-
     svg_logo = """<svg height='80px' width='80px' version='1.1'
 id='Capa_1' xmlns='http://www.w3.org/2000/svg'
 xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 425.45 425.45' xml:space='preserve'>
@@ -126,7 +100,6 @@ c15.835,10.017,25.536,11.79,40.03,11.796h0.066c14.494-0.006,24.195-1.779,40.03-1
 h9.869c17.365,0.021,31.487,14.154,31.487,31.524c0,17.383-14.142,31.525-31.525,31.525
 C273.766,72.016,259.696,60.63,258.043,47.153z'/>
 </svg>"""
-
     css = """
 *,
 *:before,
@@ -219,17 +192,15 @@ a:hover {
 
 path {
   fill: rgb(35, 63, 51);
-}
-    """
-
-    html_contet =f"""<!DOCTYPE html>
+}"""
+    html_template = """<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <link rel="icon" href="data:image/svg+xml;utf8,{svg_icon}" />
-    <title>Alexandria - Home</title>
+    <title>Alexandria - Welcome</title>
     <style>
     {css}
     </style>
@@ -252,12 +223,50 @@ path {
         </table>
 
     </main>
-	<script src="index.js"></script>
   </body>
 </html>"""
 
-    with open("index.html", "w", encoding="utf-8") as index:
-        index.writelines(html_contet)
+    def do_GET(self):
+        handler = MirrorsFile(DATABASE_URL).to_html
+
+        url = urlparse(self.path)
+        if url.path == "/":
+            index = self.create_index(handler())
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(bytes(index, "utf-8"))
+        else:
+            return super().do_GET()
+
+    def create_index(self, table):
+        return self.html_template.format(css=self.css,
+                                         svg_icon=self.svg_icon,
+                                         svg_logo=self.svg_logo,
+                                         table=table)
+
+def try_open_link(link):
+    try:
+        subprocess.run(["xdg-open", link], capture_output=True, check=True)
+    except FileNotFoundError:
+        pass
+
+def server(port):
+    server_handler = MirrorHandler
+
+    with HTTPServer(("", port), server_handler) as httpd:
+        a_print(f"Start server at {port}")
+
+        link = f"http://localhost:{port}"
+        a_print(LINK_MASK.format(link, f"http://localhost:{port}"))
+        try_open_link(link)
+
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print(chr(27) + "[2J")
+            a_print("bye bye!")
+            sys.exit(EXIT_SUCCESS)
 
 def humanize_kb(kb):
     return "{num:3.3f} KiB".format(num = (kb // KB) / KB)
@@ -354,8 +363,7 @@ class MirrorsFile():
         for mirror in mirrors_file:
             self.add(WebsiteMirror.from_mirror(mirror))
 
-        debug_print("MirrorsFile loaded!")
-        debug_print(f"Mirrors: {self.data}")
+        debug_print(f"MirrorsFile loaded! -  {self.data}")
 
     def __iter__(self):
         return self.data.__iter__()
@@ -370,11 +378,11 @@ class MirrorsFile():
     def to_html(self):
         return " ".join(m.to_html() for m in self.data)
 
-    def add(self, mirror):
-        if mirror not in self.data:
-            self.data.append(mirror)
+    def add(self, mr):
+        if mr not in self.data:
+            self.data.append(mr)
         else:
-            a_print(f"Skip add {mirror.url}, already in")
+            a_print(f"Skip add {mr.url}, already in")
 
     def save(self):
         # keeps its overwriting, redo keeping writing and append if it get wrost
@@ -386,15 +394,12 @@ if __name__ == "__main__":
     website = args.website
     port = int(args.port)
 
-    mirrors = MirrorsFile("data")
-
     if not website:
-        create_index(mirrors.to_html()) # TODO generate index for each request, need overwrite simplehttphandler
         server(port)
 
-    if WebsiteMirror(website) not in mirrors:
-        process_download(website)
-
+    process_download(website)
     mirror = WebsiteMirror(website)
+
+    mirrors = MirrorsFile(DATABASE_URL)
     mirrors.add(mirror)
     mirrors.save()
