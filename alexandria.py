@@ -13,14 +13,14 @@ from urllib.parse import urlparse
 
 DATABASE_URL = "./data"
 DEFAULT_PORT = 8000
-DEBUG = False
+DEBUG = True
 EXIT_SUCCESS = 0
 BORDER_PRINT = "*" * 8
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 KB = 1024
 
 parser = argparse.ArgumentParser(prog="Alexandria",
-                                 description="Alexandria library is a tool to make backup of a website and manage",
+                                 description="Alexandria is a tool to build your personal library from internet - and a server too",
                                  epilog="Keep and hold")
 parser.add_argument("website", help="An internet link", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
@@ -51,7 +51,7 @@ def process_download(url):
                     f" --no-parent {url}".split(" "))
 
     debug_print("command: {}".format(" ".join(wget_process)))
-    subprocess.run(wget_process, check=True)
+    subprocess.run(wget_process)
     a_print(f"Finished {url}!!!")
 
 class MirrorHandler(SimpleHTTPRequestHandler):
@@ -208,7 +208,7 @@ path {
   <body>
     <main>
         <h1>Welcome to Alexandria{svg_logo}</h1>
-        <h2>Your private library</h2>
+        <h2>Your personal library from internet</h2>
 
         <hr />
 
@@ -269,7 +269,7 @@ def server(port):
             sys.exit(EXIT_SUCCESS)
 
 def humanize_kb(kb):
-    return "{num:3.3f} KiB".format(num = (kb // KB) / KB)
+    return "{num:3.1f} KiB".format(num = (kb / KB))
 
 class WebsiteMirror:
     title_re = re.compile(r"<title.*?>(.+?)</title>")
