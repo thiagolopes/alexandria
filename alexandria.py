@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 DATABASE_URL = "./database"
 DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
-DEBUG = True
+DEBUG = False
 EXIT_SUCCESS = 0
 BORDER_PRINT = "*" * 8
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(prog="Alexandria",
                                  epilog="Keep and hold")
 parser.add_argument("website", help="An internet link", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
-parser.add_argument("-l", "--list", help="List database websites without server", default=None)
+parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction)
 
 def clear_stdout():
     print(chr(27) + "[2J")
@@ -230,49 +230,40 @@ path {
   </body>
 </html>"""
 
-    def do_POST(self):
-        a_print("POST!!!")
-        self.send_response(201)
+    def respond(self, response, status_code):
+        self.send_response(status_code)
+        self.send_header("Content-type", "text/html")
         self.end_headers()
+        self.wfile.write(bytes(response, "utf-8"))
+
+    def do_POST(self):
+        # TODO suport mirror create
+        a_print("POST!!!")
+        self.respond("post", 201)
 
     def do_GET(self):
-        handler = MirrorsFile(DATABASE_URL).to_html
+        mirrors_table = MirrorsFile(DATABASE_URL).to_html
 
         url = urlparse(self.path)
         if url.path == "/":
-            index = self.create_index(handler())
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(bytes(index, "utf-8"))
-        else:
-            return super().do_GET()
+            index = self.html_template.format(
+                css=self.css, svg_icon=self.svg_icon, svg_logo=self.svg_logo, table=mirrors_table()
+            )
+            return self.respond(index, 200)
 
-    def create_index(self, table):
-        return self.html_template.format(css=self.css,
-                                         svg_icon=self.svg_icon,
-                                         svg_logo=self.svg_logo,
-                                         table=table)
+        return super().do_GET()
 
 def serve(port):
     server = HTTPServerAlexandria
     a_print(f"Start server at {port}")
-    link = f"http://localhost:{port}"
-    a_print(LINK_MASK.format(link, f"http://localhost:{port}"))
-
-    # TODO implement router to be possible implement other http actions - aka: new url from webpage
-    # Router({"/": {"GET": index_page, "POST": reg_mirror}
-    #         "/tags" {"POST": reg_tag}})
-    # server = HttpServerAlexandria(router)
-    # with server(port) as httpd:
-    #     httpd.serve_forever()
+    a_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
 
     with HTTPServer(("", port), server) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            clear_stdout()
-            a_print(f"Alexandria server:{port} ended!")
+            httpd.server_close()
+            clear_stdout() ; a_print(f"Alexandria server:{port} ended!")
             sys.exit(EXIT_SUCCESS)
 
 def humanize_size(num):
@@ -286,7 +277,6 @@ def humanize_size(num):
     return "{num:3.1f} {u} ".format(num = num, u = u)
 
 def humanize_url(url):
-    # TODO truncate if needed
     return url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
 
 def humanize_datetime(dt):
@@ -346,7 +336,7 @@ class WebsiteMirror:
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
-        assert False, "unreachable - do not found title in the html"
+        assert False, "unreachable - do not found <title> in the html"
 
     def calculate_size_disk(self, path):
         total = 0
@@ -413,6 +403,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     website = args.website
     port = int(args.port)
+    DEBUG = args.verbose
 
     if not website:
         serve(port)
