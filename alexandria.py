@@ -293,7 +293,7 @@ def humanize_datetime(dt):
     return dt.strftime(DATETIME_FMT)
 
 class WebsiteMirror:
-    title_re = re.compile(r"<title.*?>(.+?)</title>")
+    title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.DOTALL)
 
     def __init__(self, url, created_at=None):
         self.url = url
