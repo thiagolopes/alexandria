@@ -20,7 +20,7 @@ LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 KB = 1024
 
 parser = argparse.ArgumentParser(prog="Alexandria",
-                                 description="Alexandria is a tool to build your personal library from internet - and a server too",
+                                 description="A tool to manage your personal website backup libary",
                                  epilog="Keep and hold")
 parser.add_argument("website", help="An internet link", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
@@ -34,9 +34,9 @@ def debug_print(*args):
         print("[DEBUG] ", end="")
         print(*args)
 
-def a_print(*objects):
+def a_print(*args):
     print(BORDER_PRINT + " ", end="")
-    print(*objects, end="")
+    print(*args, end="")
     print(" " + BORDER_PRINT)
 
 def process_download(url):
@@ -230,6 +230,10 @@ path {
   </body>
 </html>"""
 
+    def log_message(self, format, *args):
+        if DEBUG:
+            return super().log_message(format, *args)
+
     def respond(self, response, status_code):
         self.send_response(status_code)
         self.send_header("Content-type", "text/html")
@@ -372,7 +376,7 @@ class MirrorsFile():
         self.data = self.default()
         for mirror in mirrors_file:
             self.add(WebsiteMirror.from_mirror(mirror))
-        debug_print(f"MirrorsFile loaded! -  {self.data}")
+        debug_print(f"MirrorsFile loaded! -  total: {len(self.data)}")
 
     def __iter__(self):
         return self.data.__iter__()
