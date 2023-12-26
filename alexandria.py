@@ -22,31 +22,28 @@ KB = 1024
 parser = argparse.ArgumentParser(prog="Alexandria",
                                  description="A tool to manage your personal website backup libary",
                                  epilog="Keep and hold")
-parser.add_argument("website", help="An internet link", nargs="?")
-parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT)
-parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction)
-
-def clear_stdout():
-    print(chr(27) + "[2J")
+parser.add_argument("website", help="An internet link (URL)", nargs="?",)
+parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
+parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 
 def debug_print(*args):
     if DEBUG:
         print("[DEBUG] ", end="")
         print(*args)
 
-def a_print(*args):
-    print(BORDER_PRINT + " ", end="")
+def title_print(*args):
+    print("\n" + BORDER_PRINT + " ", end="")
     print(*args, end="")
     print(" " + BORDER_PRINT)
 
 def process_download(url):
     urlp = urlparse(url)
     if not bool(urlp.scheme):
-        a_print(f"Not valid url - {url}")
+        title_print(f"Not valid url - {url}")
         sys.exit(EXIT_SUCCESS)
 
     domain = urlp.hostname
-    a_print(f"Making a mirror of: {url} at {domain}")
+    title_print(f"Making a mirror of: {url} at {domain}")
 
     wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
                     f" -U 'Mozilla' -E -k"
@@ -55,8 +52,8 @@ def process_download(url):
                     f" --no-parent {url}".split(" "))
 
     debug_print("command: {}".format(" ".join(wget_process)))
-    subprocess.run(wget_process)
-    a_print(f"Finished {url}!!!")
+    subprocess.run(wget_process, check=False)
+    title_print(f"Finished {url}!!!")
 
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
@@ -230,9 +227,9 @@ path {
   </body>
 </html>"""
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         if DEBUG:
-            return super().log_message(format, *args)
+            return super().log_message(fmt, *args)
 
     def respond(self, response, status_code):
         self.send_response(status_code)
@@ -242,7 +239,7 @@ path {
 
     def do_POST(self):
         # TODO suport mirror create
-        a_print("POST!!!")
+        title_print("POST!!!")
         self.respond("post", 201)
 
     def do_GET(self):
@@ -259,15 +256,15 @@ path {
 
 def serve(port):
     server = HTTPServerAlexandria
-    a_print(f"Start server at {port}")
-    a_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
+    title_print(f"Start server at {port}")
+    title_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
 
     with HTTPServer(("", port), server) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             httpd.server_close()
-            clear_stdout() ; a_print(f"Alexandria server:{port} ended!")
+            title_print(f"Alexandria server:{port} ended!")
             sys.exit(EXIT_SUCCESS)
 
 def humanize_size(num):
@@ -326,7 +323,8 @@ class WebsiteMirror:
         if path[-1] == "/":
             path = path[:-1]
 
-        possibles_files = [Path(path + p) for p in ["", ".html", "/index.html"]]
+        matches_files = ["", ".html", "/index.html", "/index.html@" + url.query + ".html"]
+        possibles_files = [Path(path + p) for p in matches_files]
         for f in possibles_files:
             if f.is_file():
                 return str(f)
@@ -340,7 +338,8 @@ class WebsiteMirror:
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
-        assert False, "unreachable - do not found <title> in the html"
+        assert False, (f"unreachable - do not found <title> in the html\n"
+                       f"-> {self.url} NEED be a staticpage!")
 
     def calculate_size_disk(self, path):
         total = 0
@@ -396,9 +395,10 @@ class MirrorsFile():
         if mr not in self.data:
             self.data.append(mr)
         else:
-            a_print(f"Skip add {mr.url}, already in")
+            title_print(f"Skip add {mr.url}, already in")
 
     def save(self):
+        debug_print("[DEBUG] Saving mirrors-list on disk...")
         # keeps its overwriting, redo keeping writing and append if it get wrost
         with open(self.path, "wb") as f:
             pickle.dump(self.data, f, pickle.HIGHEST_PROTOCOL)
