@@ -18,6 +18,7 @@ EXIT_SUCCESS = 0
 BORDER_PRINT = "*" * 8
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 KB = 1024
+MAX_TRUNC = 45
 
 parser = argparse.ArgumentParser(prog="Alexandria",
                                  description="A tool to manage your personal website backup libary",
@@ -56,9 +57,12 @@ def process_download(url):
     title_print(f"Finished {url}!!!")
 
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):
+    server_version = "HTTPServerAlexandria"
+
     svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
 <circle cx='50' cy='50' r='50'/>
 </svg>"""
+
     svg_logo = """<svg height='80px' width='80px' version='1.1'
 id='Capa_1' xmlns='http://www.w3.org/2000/svg'
 xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 425.45 425.45' xml:space='preserve'>
@@ -101,6 +105,7 @@ c15.835,10.017,25.536,11.79,40.03,11.796h0.066c14.494-0.006,24.195-1.779,40.03-1
 h9.869c17.365,0.021,31.487,14.154,31.487,31.524c0,17.383-14.142,31.525-31.525,31.525
 C273.766,72.016,259.696,60.63,258.043,47.153z'/>
 </svg>"""
+
     css = """
 *,
 *:before,
@@ -110,20 +115,17 @@ C273.766,72.016,259.696,60.63,258.043,47.153z'/>
   margin: 0;
   padding: 0;
 }
-
 html {
   font-size: 16px;
   font-family: serif;
   color: #252525;
 }
-
 body {
   background: #a8c0ff;  /* fallback for old browsers */
   border: 2vh solid rgba(159, 228, 196, 0.5);
   min-height: 100vh;
   padding: 2.5vw;
 }
-
 h1 {
   text-align: right;
   font-size: 5vw;
@@ -131,7 +133,6 @@ h1 {
   letter-spacing: 0.25vw;
   color: rgb(35, 63, 51);
 }
-
 h2 {
   text-align: right;
   font-size: 1.5vw;
@@ -139,14 +140,12 @@ h2 {
   letter-spacing: 0.25vw;
   color: #485a88;
 }
-
 hr {
   margin: 2vh 0;
   height: 2px;
   border: transparent;
   background: rgb(139, 228, 189, 0.5);
 }
-
 table {
   border-width: 2px;
   border-color: rgba(159, 228, 196, 0.5);
@@ -156,7 +155,6 @@ table {
   font-family: sans-serif;
   font-weight: 400;
 }
-
 th {
   padding: 0.5rem;
   background: rgb(53, 85, 71);
@@ -166,18 +164,15 @@ th {
   text-transform: uppercase;
   font-size: 0.85rem;
 }
-
 tr {
   border: 1px solid rgba(255,255,255,0.3);
 }
-
 td {
   padding: 0.5rem;
   text-align: center;
   color: rgb(35, 63, 51);
   background: rgb(139, 228, 189);
 }
-
 a,
 a:visited,
 a:focus,
@@ -186,14 +181,13 @@ a:active {
   color: #485a88;
   text-decoration: none;
 }
-
 a:hover {
   text-decoration: underline;
 }
-
 path {
   fill: rgb(35, 63, 51);
 }"""
+
     html_template = """<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -231,27 +225,20 @@ path {
         if DEBUG:
             return super().log_message(fmt, *args)
 
-    def respond(self, response, status_code):
+    def response(self, status_code, **context):
+        template = self.html_template.format(css=self.css, svg_icon=self.svg_icon, svg_logo=self.svg_logo, **context)
+
         self.send_response(status_code)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(bytes(response, "utf-8"))
-
-    def do_POST(self):
-        # TODO suport mirror create
-        title_print("POST!!!")
-        self.respond("post", 201)
+        self.wfile.write(bytes(template, "utf-8"))
 
     def do_GET(self):
         mirrors_table = MirrorsFile(DATABASE_URL).to_html
 
         url = urlparse(self.path)
         if url.path == "/":
-            index = self.html_template.format(
-                css=self.css, svg_icon=self.svg_icon, svg_logo=self.svg_logo, table=mirrors_table()
-            )
-            return self.respond(index, 200)
-
+            return self.response(200, table=mirrors_table())
         return super().do_GET()
 
 def serve(port):
@@ -352,14 +339,15 @@ class WebsiteMirror:
         return total
 
     def to_html(self):
-        date = humanize_datetime(self.created_at)
-        size = humanize_size(self.size)
-        url =  humanize_url(self.url)
+        url = humanize_url(self.url)
+        if len(url) > MAX_TRUNC:
+            url = url[:MAX_TRUNC] + "(...)"
+
         return f"""<tr>
             <td><a href="{self.path}">{url}</a></td>
             <td>{self.title}</td>
-            <td>{size}</td>
-            <td>{date}</td>
+            <td>{humanize_size(self.size)}</td>
+            <td>{humanize_datetime(self.created_at)}</td>
             </tr>"""
 
 class MirrorsFile():
