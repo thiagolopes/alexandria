@@ -37,25 +37,6 @@ def title_print(*args):
     print(*args, end="")
     print(" " + BORDER_PRINT)
 
-def process_download(url):
-    urlp = urlparse(url)
-    if not bool(urlp.scheme):
-        title_print(f"Not valid url - {url}")
-        sys.exit(EXIT_SUCCESS)
-
-    domain = urlp.hostname
-    title_print(f"Making a mirror of: {url} at {domain}")
-
-    wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
-                    f" -U 'Mozilla' -E -k"
-                    f" -e robots=off --random-wait --no-cookies"
-                    f" --convert-links --restrict-file-names=windows --domains {domain}"
-                    f" --no-parent {url}".split(" "))
-
-    debug_print("command: {}".format(" ".join(wget_process)))
-    subprocess.run(wget_process, check=False)
-    title_print(f"Finished {url}!!!")
-
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     server_version = "HTTPServerAlexandria"
 
@@ -234,25 +215,12 @@ path {
         self.wfile.write(bytes(template, "utf-8"))
 
     def do_GET(self):
-        mirrors_table = MirrorsFile(DATABASE).to_html
+        mirrors_table = MirrorsFile(DATABASE).to_html()
 
         url = urlparse(self.path)
         if url.path == "/":
-            return self.response(200, table=mirrors_table())
+            return self.response(200, table=mirrors_table)
         return super().do_GET()
-
-def serve(port):
-    server = HTTPServerAlexandria
-    title_print(f"Start server at {port}")
-    title_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
-
-    with HTTPServer(("", port), server) as httpd:
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            httpd.server_close()
-            title_print(f"Alexandria server:{port} ended!")
-            sys.exit(EXIT_SUCCESS)
 
 def humanize_size(num):
     units = ("KiB", "MiB", "GiB")
@@ -390,6 +358,38 @@ class MirrorsFile():
         # keeps its overwriting, redo keeping writing and append if it get wrost
         with open(self.path, "wb") as f:
             pickle.dump(self.data, f, pickle.HIGHEST_PROTOCOL)
+
+def serve(port):
+    server = HTTPServerAlexandria
+    title_print(f"Start server at {port}")
+    title_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
+
+    with HTTPServer(("", port), server) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            httpd.server_close()
+            title_print(f"Alexandria server:{port} ended!")
+            sys.exit(EXIT_SUCCESS)
+
+def process_download(url):
+    urlp = urlparse(url)
+    if not bool(urlp.scheme):
+        title_print(f"Not valid url - {url}")
+        sys.exit(EXIT_SUCCESS)
+
+    domain = urlp.hostname
+    title_print(f"Making a mirror of: {url} at {domain}")
+
+    wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
+                    f" -U 'Mozilla' -E -k"
+                    f" -e robots=off --random-wait --no-cookies"
+                    f" --convert-links --restrict-file-names=windows --domains {domain}"
+                    f" --no-parent {url}".split(" "))
+
+    debug_print("command: {}".format(" ".join(wget_process)))
+    subprocess.run(wget_process, check=False)
+    title_print(f"Finished {url}!!!")
 
 if __name__ == "__main__":
     args = parser.parse_args()
