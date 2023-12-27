@@ -10,7 +10,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-DATABASE_URL = "./database"
+DATABASE = "./database"
 DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = False
@@ -234,7 +234,7 @@ path {
         self.wfile.write(bytes(template, "utf-8"))
 
     def do_GET(self):
-        mirrors_table = MirrorsFile(DATABASE_URL).to_html
+        mirrors_table = MirrorsFile(DATABASE).to_html
 
         url = urlparse(self.path)
         if url.path == "/":
@@ -265,6 +265,9 @@ def humanize_size(num):
     return "{num:3.1f} {u} ".format(num = num, u = u)
 
 def humanize_url(url):
+    if len(url) > MAX_TRUNC:
+        url = url[:MAX_TRUNC] + "(...)"
+
     return url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
 
 def humanize_datetime(dt):
@@ -340,9 +343,6 @@ class WebsiteMirror:
 
     def to_html(self):
         url = humanize_url(self.url)
-        if len(url) > MAX_TRUNC:
-            url = url[:MAX_TRUNC] + "(...)"
-
         return f"""<tr>
             <td><a href="{self.path}">{url}</a></td>
             <td>{self.title}</td>
@@ -404,6 +404,6 @@ if __name__ == "__main__":
     process_download(website)
     mirror = WebsiteMirror(website)
 
-    mirrors = MirrorsFile(DATABASE_URL)
+    mirrors = MirrorsFile(DATABASE)
     mirrors.add(mirror)
     mirrors.save()
