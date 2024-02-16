@@ -10,7 +10,9 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-DATABASE = "./database"
+ALEXANDRIA_PATH = "alx/"
+DATABASE = ALEXANDRIA_PATH + "database"
+MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
 DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = False
@@ -26,11 +28,18 @@ parser = argparse.ArgumentParser(prog="Alexandria",
 parser.add_argument("website", help="An internet link (URL)", nargs="?",)
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
+parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 
-def debug_print(*args):
+def debug_print(*args, **kwargs):
+    border = kwargs.pop("border", False)
+    times_border = 6
     if DEBUG:
+        if border:
+            print(BORDER_PRINT * times_border)
         print("[DEBUG] ", end="")
         print(*args)
+        if border:
+            print(BORDER_PRINT * times_border)
 
 def title_print(*args):
     print("\n" + BORDER_PRINT + " ", end="")
@@ -276,17 +285,19 @@ class WebsiteMirror:
 
     def path_from_url(self, url):
         url = urlparse(url)
-        path = url.netloc + url.path
+        path = MIRRORS_PATH + url.netloc + url.path
 
         if path[-1] == "/":
             path = path[:-1]
 
-        matches_files = ["", ".html", "/index.html", "/index.html@" + url.query + ".html"]
+        matches_files = ["", ".html", "/index.html", ("/index.html@" + url.query + ".html")]
         possibles_files = [Path(path + p) for p in matches_files]
         for f in possibles_files:
             if f.is_file():
                 return str(f)
-        assert False, "unreachable - cound not determinate the html file"
+        assert False,( "unreachable - cound not determinate the html file!\n"
+                       "check there is any option available: \n" +
+                       "\n".join(str(p) for p in possibles_files))
 
     def grep_title_from_file(self):
         file_text = ""
@@ -354,7 +365,7 @@ class MirrorsFile():
             title_print(f"Skip add {mr.url}, already in")
 
     def save(self):
-        debug_print("[DEBUG] Saving mirrors-list on disk...")
+        debug_print("Saving mirrors-list on disk...")
         # keeps its overwriting, redo keeping writing and append if it get wrost
         with open(self.path, "wb") as f:
             pickle.dump(self.data, f, pickle.HIGHEST_PROTOCOL)
@@ -381,7 +392,9 @@ def process_download(url):
     domain = urlp.hostname
     title_print(f"Making a mirror of: {url} at {domain}")
 
-    wget_process = (f"wget --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
+    wget_process = (f"wget"
+                    f" -P {MIRRORS_PATH}"
+                    f" --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
                     f" -U 'Mozilla' -E -k"
                     f" -e robots=off --random-wait --no-cookies"
                     f" --convert-links --restrict-file-names=windows --domains {domain}"
@@ -392,16 +405,23 @@ def process_download(url):
     title_print(f"Finished {url}!!!")
 
 if __name__ == "__main__":
+    title_print("Alexandria")
+
     args = parser.parse_args()
     website = args.website
     port = int(args.port)
     DEBUG = args.verbose
+    skip = args.skip
 
+    # server it - bye!
     if not website:
         serve(port)
         sys.exit(EXIT_SUCCESS)
 
-    process_download(website)
+    if skip and DEBUG:
+        debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
+    else:
+        process_download(website)
     mirror = WebsiteMirror(website)
 
     mirrors = MirrorsFile(DATABASE)
