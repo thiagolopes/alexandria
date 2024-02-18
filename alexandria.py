@@ -224,10 +224,10 @@ path {
         self.wfile.write(bytes(template, "utf-8"))
 
     def do_GET(self):
-        mirrors_table = MirrorsFile(DATABASE).to_html()
-
         url = urlparse(self.path)
+
         if url.path == "/":
+            mirrors_table = MirrorsFile(DATABASE).to_html()
             return self.response(200, table=mirrors_table)
         return super().do_GET()
 
