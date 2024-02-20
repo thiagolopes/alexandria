@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 ALEXANDRIA_PATH = "alx/"
 DATABASE = ALEXANDRIA_PATH + "database"
+DATABASE_README = ALEXANDRIA_PATH + "README.md"
 MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
 DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
@@ -329,6 +330,9 @@ class WebsiteMirror:
             <td>{humanize_datetime(self.created_at)}</td>
             </tr>"""
 
+    def to_md(self):
+        return f"[{self.title}]({self.url})\n_{self.created_at.strftime(DATETIME_FMT)}_"
+
 class MirrorsFile():
     default = list
 
@@ -351,12 +355,16 @@ class MirrorsFile():
     def initial_migration_if_need(cls, path):
         file_disk = Path(path)
         if not file_disk.exists():
+            self.save(cls.default())
             debug_print("Initial migration done!")
-            with open(path, "wb") as f:
-                pickle.dump(cls.default(), f, pickle.HIGHEST_PROTOCOL)
 
     def to_html(self):
         return " ".join(m.to_html() for m in self.data)
+
+    def to_md(self):
+        today = datetime.now()
+        md_body = "\n\n".join(m.to_md() for m in self.data)
+        return "# Alexandria - generated at {}\n{}".format(today.strftime(DATETIME_FMT), md_body)
 
     def add(self, mr):
         if mr not in self.data:
@@ -364,11 +372,14 @@ class MirrorsFile():
         else:
             title_print(f"Skip add {mr.url}, already in")
 
-    def save(self):
+    def save(self, data=None):
+        if not data:
+            # keeps its overwriting, redo keeping writing and append if it get wrost
+            data = self.data
+
         debug_print("Saving mirrors-list on disk...")
-        # keeps its overwriting, redo keeping writing and append if it get wrost
         with open(self.path, "wb") as f:
-            pickle.dump(self.data, f, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
 def serve(port):
     server = HTTPServerAlexandria
@@ -404,6 +415,11 @@ def process_download(url):
     subprocess.run(wget_process, check=False)
     title_print(f"Finished {url}!!!")
 
+def generate_md_database(content):
+    with open(DATABASE_README, "wb") as f:
+        f.write(bytes(content, "utf-8"))
+    debug_print(f"Database {DATABASE_README} generated...")
+
 if __name__ == "__main__":
     title_print("Alexandria")
 
@@ -427,3 +443,4 @@ if __name__ == "__main__":
     mirrors = MirrorsFile(DATABASE)
     mirrors.add(mirror)
     mirrors.save()
+    generate_md_database(mirrors.to_md())
