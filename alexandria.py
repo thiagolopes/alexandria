@@ -261,7 +261,7 @@ def humanize_datetime(dt):
 class WebPage:
     title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
-    def __init__(self, url, created_at=None, size=None):
+    def __init__(self, url, created_at=None):
         self.url = url
         self.base_path, self.path = self.index_path(url)
         self.title = self.grep_title_from_index()
@@ -289,7 +289,7 @@ class WebPage:
     @classmethod
     def from_mirror(cls, other):
         # Re-crate mirror from other mirror
-        return cls(other.url, other.created_at, other.size)
+        return cls(other.url, other.created_at)
 
     def index_path(self, url):
         url = urlparse(url)
