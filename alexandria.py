@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 ALEXANDRIA_PATH = "alx/"
-DATABASE = ALEXANDRIA_PATH + "database"
+DATABASE_PATH = ALEXANDRIA_PATH + "database"
 DATABASE_README = ALEXANDRIA_PATH + "README.md"
 MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
 DATETIME_FMT = "%d. %B %Y %I:%M%p"
@@ -19,7 +19,7 @@ DEFAULT_PORT = 8000
 DEBUG = False
 EXIT_SUCCESS = 0
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
-KB = 1024
+KiB = 1000
 MAX_TRUNC = 45
 
 parser = argparse.ArgumentParser(prog="Alexandria",
@@ -29,6 +29,11 @@ parser.add_argument("website", help="An internet link (URL)", nargs="?",)
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
+
+# NOTE Compatibility mode - will drop soon
+class WebsiteMirror:
+    def __init__(self, *args, **kwargs):
+        return Database(*args, **kwargs)
 
 def border_msg(msg):
     width = 25
@@ -231,16 +236,15 @@ path {
         url = urlparse(self.path)
 
         if url.path == "/":
-            mirrors_table = MirrorsFile(DATABASE).to_html()
-            return self.response(200, table=mirrors_table)
+            database = Database(DATABASE_PATH)
+            return self.response(200, table=database.to_html())
         return super().do_GET()
 
 def humanize_size(num):
-    units = ("KiB", "MiB", "GiB")
-    limit_to_nex_unit = 1000
+    units = ("KB", "MB", "GB")
     for u in units:
-        num /= KB
-        if num > limit_to_nex_unit:
+        num /= KiB
+        if num > KiB:
             continue
         break
     return "{num:3.1f} {u} ".format(num = num, u = u)
@@ -254,14 +258,14 @@ def humanize_url(url):
 def humanize_datetime(dt):
     return dt.strftime(DATETIME_FMT)
 
-class WebsiteMirror:
-    title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE)
+class WebPage:
+    title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
-    def __init__(self, url, created_at=None):
+    def __init__(self, url, created_at=None, size=None):
         self.url = url
-        self.path = self.path_from_url(url)
-        self.title = self.grep_title_from_file()
-        self.size = self.calculate_size_disk(self.path.split("/")[0])
+        self.base_path, self.path = self.index_path(url)
+        self.title = self.grep_title_from_index()
+        self.size = self.calculate_size_disk(self.base_path)
 
         if created_at is None:
             debug_print(f"Generated - {self.url}")
@@ -285,12 +289,11 @@ class WebsiteMirror:
     @classmethod
     def from_mirror(cls, other):
         # Re-crate mirror from other mirror
-        return cls(other.url, other.created_at)
+        return cls(other.url, other.created_at, other.size)
 
-    def path_from_url(self, url):
+    def index_path(self, url):
         url = urlparse(url)
         path = MIRRORS_PATH + url.netloc + url.path
-
         if path[-1] == "/":
             path = path[:-1]
 
@@ -298,13 +301,13 @@ class WebsiteMirror:
         possibles_files = [Path(path + p) for p in matches_files]
         for f in possibles_files:
             if f.is_file():
-                return str(f)
+                return MIRRORS_PATH + url.netloc, str(f)
         # TODO move to a exception
         assert False, ( "unreachable - cound not determinate the html file!\n"
                        "check there is any option available: \n" +
                        "\n".join(str(p) for p in possibles_files))
 
-    def grep_title_from_file(self):
+    def grep_title_from_index(self):
         file_text = ""
         with open(self.path, "r") as f:
             for l in f.readlines():
@@ -338,7 +341,7 @@ class WebsiteMirror:
     def to_md(self):
         return f"[{self.title}]({self.url})\n_{self.created_at.strftime(DATETIME_FMT)}_"
 
-class MirrorsFile():
+class Database():
     default = list
 
     def __init__(self, path):
@@ -346,12 +349,12 @@ class MirrorsFile():
         self.initial_migration_if_need(path)
 
         with open(path, "rb") as f:
-            mirrors_file = pickle.load(f)
+            db_file = pickle.load(f)
 
         self.data = self.default()
-        for mirror in mirrors_file:
-            self.add(WebsiteMirror.from_mirror(mirror))
-        debug_print(f"MirrorsFile loaded! -  total: {len(self.data)}")
+        for entry in db_file:
+            self.add(WebPage.from_mirror(entry))
+        debug_print(f"Database loaded! -  total: {len(self.data)}")
 
     def __iter__(self):
         return self.data.__iter__()
@@ -442,9 +445,9 @@ if __name__ == "__main__":
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         process_download(website)
-    mirror = WebsiteMirror(website)
+    webpage = WebPage(website)
 
-    mirrors = MirrorsFile(DATABASE)
-    mirrors.add(mirror)
-    mirrors.save()
-    generate_md_database(mirrors.to_md())
+    database = Database(DATABASE_PATH)
+    database.add(webpage)
+    database.save()
+    generate_md_database(database.to_md())
