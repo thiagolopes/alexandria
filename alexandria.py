@@ -30,6 +30,7 @@ parser.add_argument("website", help="An internet link (URL)", nargs="?",)
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
+parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 
 def border_msg(msg):
     width = 25
@@ -323,16 +324,21 @@ class WebPage:
         return total
 
     def to_html(self):
+        title = self.sanitize_title()
         url = humanize_url(self.url)
         return f"""<tr>
-            <td class="td_title">{self.title}</td>
+            <td class="td_title">{title}</td>
             <td><a href="{self.path}">{url}</a></td>
             <td>{humanize_size(self.size)}</td>
             <td>{humanize_datetime(self.created_at)}</td>
             </tr>"""
 
+    def sanitize_title(self):
+        return self.title.replace("|", "-").replace("\n", "")
+
     def to_md(self):
-        return f"[{self.title}]({self.url})\n_{self.created_at.strftime(DATETIME_FMT)}_"
+        title = self.sanitize_title()
+        return f"| [{title}]({self.url}) | {self.created_at.strftime(DATETIME_FMT)} |"
 
 class Database():
     default = list
@@ -371,8 +377,11 @@ class Database():
 
     def to_md(self):
         today = datetime.now()
-        md_body = "\n\n".join(m.to_md() for m in self.data)
-        return f"# Alexandria - generated at {today.strftime(DATETIME_FMT)}\n{md_body}"
+        md_body = "\n".join(m.to_md() for m in self.data)
+        return (f"# Alexandria - generated at {today.strftime(DATETIME_FMT)}\n"
+                f"| Site | Created at |\n"
+                f"| ---- | ---------- |\n"
+                f"{md_body}\n")
 
     def add(self, mr):
         if mr not in self.data:
@@ -438,8 +447,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
     website = args.website
     port = int(args.port)
-    DEBUG = args.verbose
     skip = args.skip
+    generate_readme = args.readme
+    DEBUG = args.verbose
+
+    database = Database(DATABASE_PATH)
+
+    if DEBUG and generate_readme:
+        generate_md_database(database.to_md())
+        sys.exit(EXIT_SUCCESS)
 
     # server it - bye!
     if not website:
@@ -450,9 +466,8 @@ if __name__ == "__main__":
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         process_download(website)
-    webpage = WebPage(website)
 
-    database = Database(DATABASE_PATH)
+    webpage = WebPage(website)
     database.add(webpage)
     database.save()
     generate_md_database(database.to_md())
