@@ -18,7 +18,6 @@ DATETIME_FMT = "%d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = False
 EXIT_SUCCESS = 0
-BORDER_PRINT = "*" * 8
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 KB = 1024
 MAX_TRUNC = 45
@@ -31,21 +30,25 @@ parser.add_argument("-p", "--port", help="The port to run server, 8000 is defaul
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 
-def debug_print(*args, **kwargs):
-    border = kwargs.pop("border", False)
-    times_border = 6
+def border_msg(msg):
+    width = 25
+    bordered_msg = "*" * width
+    bordered_msg += f"\n{msg}\n"
+    bordered_msg += "*" * width
+    return bordered_msg
+
+def debug_print(log, border=False):
+    debug_msg = f"[DEBUG] {log}"
+
     if DEBUG:
         if border:
-            print(BORDER_PRINT * times_border)
-        print("[DEBUG] ", end="")
-        print(*args)
-        if border:
-            print(BORDER_PRINT * times_border)
+            debug_msg = border_msg(debug_msg)
+    print(debug_msg)
 
-def title_print(*args):
-    print("\n" + BORDER_PRINT + " ", end="")
-    print(*args, end="")
-    print(" " + BORDER_PRINT)
+def title_print(title):
+    border_print = "*" * 8
+    title_msg = "\n" + border_print + f" {title} " + border_print
+    print(title_msg)
 
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     server_version = "HTTPServerAlexandria"
@@ -296,7 +299,8 @@ class WebsiteMirror:
         for f in possibles_files:
             if f.is_file():
                 return str(f)
-        assert False,( "unreachable - cound not determinate the html file!\n"
+        # TODO move to a exception
+        assert False, ( "unreachable - cound not determinate the html file!\n"
                        "check there is any option available: \n" +
                        "\n".join(str(p) for p in possibles_files))
 
@@ -308,6 +312,7 @@ class WebsiteMirror:
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
+        # TODO move to a exception
         assert False, (f"unreachable - do not found <title> in the html\n"
                        f"-> {self.url} NEED be a staticpage!")
 
