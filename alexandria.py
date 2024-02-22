@@ -10,6 +10,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+# NOTE TODO this is relative
 ALEXANDRIA_PATH = "alx/"
 DATABASE_PATH = ALEXANDRIA_PATH + "database"
 DATABASE_README = ALEXANDRIA_PATH + "README.md"
@@ -29,11 +30,6 @@ parser.add_argument("website", help="An internet link (URL)", nargs="?",)
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
-
-# NOTE Compatibility mode - will drop soon
-class WebsiteMirror:
-    def __init__(self, *args, **kwargs):
-        return Database(*args, **kwargs)
 
 def border_msg(msg):
     width = 25
@@ -245,7 +241,7 @@ def humanize_size(num):
         if num > KiB:
             continue
         break
-    return "{num:3.1f} {u} ".format(num = num, u = u)
+    return f"{num:3.1f} {u}"
 
 def humanize_url(url):
     if len(url) > MAX_TRUNC:
@@ -301,9 +297,8 @@ class WebPage:
             if f.is_file():
                 return MIRRORS_PATH + url.netloc, str(f)
         # TODO move to a exception
-        assert False, ( "unreachable - cound not determinate the html file!\n"
-                       "check there is any option available: \n" +
-                       "\n".join(str(p) for p in possibles_files))
+        assert False, ("unreachable - cound not determinate the html file!\n"
+                       "check there is any option available: \n") + "\n".join(str(p) for p in possibles_files)
 
     def grep_title_from_index(self):
         file_text = ""
@@ -377,7 +372,7 @@ class Database():
     def to_md(self):
         today = datetime.now()
         md_body = "\n\n".join(m.to_md() for m in self.data)
-        return "# Alexandria - generated at {}\n{}".format(today.strftime(DATETIME_FMT), md_body)
+        return f"# Alexandria - generated at {today.strftime(DATETIME_FMT)}\n{md_body}"
 
     def add(self, mr):
         if mr not in self.data:
@@ -393,6 +388,10 @@ class Database():
         with open(self.path, "wb") as f:
             # keeps its overwriting, redo keeping writing and append if it get wrost
             pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+
+# NOTE Compatibility mode - will drop soon
+class WebsiteMirror(Database):
+    pass
 
 def serve(port):
     server = HTTPServerAlexandria
