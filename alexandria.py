@@ -14,7 +14,7 @@ ALEXANDRIA_PATH = "alx/"
 DATABASE = ALEXANDRIA_PATH + "database"
 DATABASE_README = ALEXANDRIA_PATH + "README.md"
 MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
-DATETIME_FMT = "%A, %d. %B %Y %I:%M%p"
+DATETIME_FMT = "%d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = False
 EXIT_SUCCESS = 0
@@ -351,11 +351,10 @@ class MirrorsFile():
     def __iter__(self):
         return self.data.__iter__()
 
-    @classmethod
-    def initial_migration_if_need(cls, path):
+    def initial_migration_if_need(self, path):
         file_disk = Path(path)
         if not file_disk.exists():
-            self.save(cls.default())
+            self.save(self.default())
             debug_print("Initial migration done!")
 
     def to_html(self):
@@ -373,12 +372,12 @@ class MirrorsFile():
             title_print(f"Skip add {mr.url}, already in")
 
     def save(self, data=None):
-        if not data:
-            # keeps its overwriting, redo keeping writing and append if it get wrost
+        if data is None:
             data = self.data
 
         debug_print("Saving mirrors-list on disk...")
         with open(self.path, "wb") as f:
+            # keeps its overwriting, redo keeping writing and append if it get wrost
             pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
 def serve(port):
