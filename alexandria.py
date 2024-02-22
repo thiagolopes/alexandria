@@ -185,6 +185,12 @@ a:hover {
 }
 path {
   fill: rgb(35, 63, 51);
+}
+.td_title {
+  padding: 0.5rem;
+  text-align: left;
+  color: rgb(35, 63, 51);
+  background: rgb(139, 228, 189);
 }"""
 
     html_template = """<!DOCTYPE html>
@@ -205,14 +211,6 @@ path {
         <h2>Your personal library from internet</h2>
 
         <hr />
-
-        <table>
-          <tr>
-            <th>URL</th>
-            <th>Title</th>
-            <th>Size</th>
-            <th>Created at</th>
-          </tr>
           {table}
         </table>
 
@@ -332,8 +330,8 @@ class WebPage:
     def to_html(self):
         url = humanize_url(self.url)
         return f"""<tr>
+            <td class="td_title">{self.title}</td>
             <td><a href="{self.path}">{url}</a></td>
-            <td>{self.title}</td>
             <td>{humanize_size(self.size)}</td>
             <td>{humanize_datetime(self.created_at)}</td>
             </tr>"""
@@ -366,7 +364,15 @@ class Database():
             debug_print("Initial migration done!")
 
     def to_html(self):
-        return " ".join(m.to_html() for m in self.data)
+        table = """<table>
+          <tr>
+            <th>Title</th>
+            <th>URL</th>
+            <th>Size</th>
+            <th>Created at</th>
+          </tr>\n"""
+
+        return table + " ".join(m.to_html() for m in self.data)
 
     def to_md(self):
         today = datetime.now()
