@@ -282,8 +282,8 @@ class WebPage:
         return self.url
 
     @classmethod
-    def from_mirror(cls, other):
-        # Re-crate mirror from other mirror
+    def from_webpage(cls, other):
+        # Re-crate mirror from other mirror - migrate
         return cls(other.url, other.created_at)
 
     def index_path(self, url):
@@ -352,8 +352,8 @@ class Database():
 
         self.data = self.default()
         for entry in db_file:
-            self.add(WebPage.from_mirror(entry))
-        debug_print(f"Database loaded! -  total: {len(self.data)}")
+            self.add(WebPage.from_webpage(entry))
+        debug_print(f"Database loaded! - total: {len(self.data)}")
 
     def __iter__(self):
         return self.data.__iter__()
