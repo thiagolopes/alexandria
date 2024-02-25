@@ -22,3 +22,9 @@ And the new site will be available at server instance.
 
 ## About
 This project aim to be one file only and minimal deps as possible
+
+## References
+
+- [Python 3 - Pickle Doc](https://docs.python.org/3/library/pickle.html) 
+- [Python 3 - Unittest](https://docs.python.org/3/library/unittest.html)
+- [Python 3 - Tempfile](https://docs.python.org/3/library/tempfile.html)
