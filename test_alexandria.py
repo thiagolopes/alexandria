@@ -78,6 +78,8 @@ class TestWebpage(AlexandriaTestCase, TestCase):
 
         mock_stdout.assert_called_with(f"[DEBUG] [RELOADED] {webpage!r}")
         self.assertEqual(webpage.created_at, expected_date)
+        self.assertEqual(webpage, webpage_base)
+        self.assertNotEqual(id(webpage), id(webpage_base))
 
     def test_eq(self):
         webpage = Webpage(self.url)
