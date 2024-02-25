@@ -1,7 +1,7 @@
 import argparse
 import html
 import os
-import pickle
+import pickle # REVIEW move to json?
 import re
 import subprocess
 import sys
@@ -45,7 +45,7 @@ def debug_print(log, border=False):
     if DEBUG:
         if border:
             debug_msg = border_msg(debug_msg)
-    print(debug_msg)
+        print(debug_msg)
 
 def title_print(title):
     border_print = "*" * 8
@@ -253,12 +253,12 @@ def humanize_url(url):
 def humanize_datetime(dt):
     return dt.strftime(DATETIME_FMT)
 
-class WebPage:
+class Webpage:
     title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
     def __init__(self, url, created_at=None):
         self.url = url
-        self.base_path, self.path = self.index_path(url)
+        self.base_path, self.full_path = self.index_path(url)
         self.title = self.grep_title_from_index()
         self.size = self.calculate_size_disk(self.base_path)
 
@@ -296,14 +296,14 @@ class WebPage:
         possibles_files = [Path(path + p) for p in matches_files]
         for f in possibles_files:
             if f.is_file():
-                return MIRRORS_PATH + url.netloc, str(f)
+                return (MIRRORS_PATH + url.netloc), str(f)
         # TODO move to a exception
         assert False, ("unreachable - cound not determinate the html file!\n"
                        "check there is any option available: \n") + "\n".join(str(p) for p in possibles_files)
 
     def grep_title_from_index(self):
         file_text = ""
-        with open(self.path, "r") as f:
+        with open(self.full_path, "r") as f:
             for l in f.readlines():
                 file_text += l
                 f = self.title_re.search(file_text)
@@ -328,7 +328,7 @@ class WebPage:
         url = humanize_url(self.url)
         return f"""<tr>
             <td class="td_title">{title}</td>
-            <td><a href="{self.path}">{url}</a></td>
+            <td><a href="{self.full_path}">{url}</a></td>
             <td>{humanize_size(self.size)}</td>
             <td>{humanize_datetime(self.created_at)}</td>
             </tr>"""
@@ -352,7 +352,7 @@ class Database():
 
         self.data = self.default()
         for entry in db_file:
-            self.add(WebPage.from_webpage(entry))
+            self.add(Webpage.from_webpage(entry))
         debug_print(f"Database loaded! - total: {len(self.data)}")
 
     def __iter__(self):
@@ -400,6 +400,8 @@ class Database():
 
 # NOTE Compatibility mode - will drop soon
 class WebsiteMirror(Database):
+    pass
+class WebPage(Webpage):
     pass
 
 def serve(port):
