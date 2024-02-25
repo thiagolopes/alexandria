@@ -3,14 +3,15 @@ import alexandria as alx
 import tempfile
 from unittest import TestCase
 from unittest.mock import patch
-from alexandria import Webpage
+from alexandria import Webpage, Database
 from datetime import datetime
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
+DATABASE_DEFAULT = b"\x80\x05\x5D\x94."
 
 
-class WebpageTestCase:
+class AlexandriaTestCase:
     def tmp_html(self):
         tmp_path = tempfile.TemporaryDirectory("alexandria")
         tmp_html = tempfile.NamedTemporaryFile("w+b", dir=tmp_path.name, suffix=".html", delete=False)
@@ -24,21 +25,44 @@ class WebpageTestCase:
     def setUpClass(cls):
         cls.path, cls.html, cls.url = cls.tmp_html(None)
         alx.ALEXANDRIA_PATH = cls.path.name
-        alx.DATABASE_PATH = cls.path.name + "database"
-        alx.DATABASE_README = cls.path.name + "README.md"
         alx.MIRRORS_PATH = "/tmp/"
 
     def tearDown(self):
         alx.DEBUG = False
 
 
-class TestWebpage(WebpageTestCase, TestCase):
-    @patch('builtins.print')
+class TestDatabase(AlexandriaTestCase, TestCase):
+    @patch("alexandria.Database.add")
+    @patch("alexandria.Database.save")
+    def test_new_without_migration(self, save_mock, add_mock):
+        database_path = self.path.name + "/database"
+        with open(database_path, "wb") as f:
+            f.write(DATABASE_DEFAULT)
+
+        database = Database(database_path)
+
+        save_mock.assert_not_called()
+        add_mock.assert_not_called()
+        self.assertEqual(database.path, database_path)
+        self.assertEqual(len(database.data), 0)
+
+    @patch("alexandria.Database.add")
+    def test_new_with_migration(self, add_mock):
+        database_path = self.path.name + "alx/database"
+        database = Database(database_path)
+
+        add_mock.assert_not_called()
+        self.assertEqual(database.path, database_path)
+        self.assertEqual(len(database.data), 0)
+
+
+class TestWebpage(AlexandriaTestCase, TestCase):
+    @patch("builtins.print")
     def test_created_new(self, mock_stdout):
         alx.DEBUG = True
         webpage = Webpage(self.url)
 
-        mock_stdout.assert_called_with(f"[DEBUG] Generated - {webpage.url}")
+        mock_stdout.assert_called_with(f"[DEBUG] [GENERATED] {webpage!r}")
         self.assertEqual(webpage.title, "Wikipedia - Python")
         self.assertEqual(webpage.size, len(bytes(HTML_CONTENT, ENCODE)))
         self.assertEqual(webpage.url, self.url)
@@ -52,7 +76,7 @@ class TestWebpage(WebpageTestCase, TestCase):
         webpage_base = Webpage(self.url, expected_date)
         webpage = Webpage.from_webpage(webpage_base)
 
-        mock_stdout.assert_called_with(f"[DEBUG] Reloaded - {webpage.url}")
+        mock_stdout.assert_called_with(f"[DEBUG] [RELOADED] {webpage!r}")
         self.assertEqual(webpage.created_at, expected_date)
 
     def test_eq(self):

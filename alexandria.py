@@ -263,10 +263,10 @@ class Webpage:
         self.size = self.calculate_size_disk(self.base_path)
 
         if created_at is None:
-            debug_print(f"Generated - {self.url}")
+            debug_print(f"[GENERATED] {self!r}")
             self.created_at = datetime.now()
         else:
-            debug_print(f"Reloaded - {self.url}")
+            debug_print(f"[RELOADED] {self!r}")
             self.created_at = created_at
 
     def __hash__(self):
@@ -304,8 +304,8 @@ class Webpage:
     def grep_title_from_index(self):
         file_text = ""
         with open(self.full_path, "r") as f:
-            for l in f.readlines():
-                file_text += l
+            for line in f.readlines():
+                file_text += line
                 f = self.title_re.search(file_text)
                 if f:
                     return html.unescape(f.groups()[0])
@@ -340,6 +340,7 @@ class Webpage:
         title = self.sanitize_title()
         return f"| [{title}]({self.url}) | {self.created_at.strftime(DATETIME_FMT)} |"
 
+
 class Database():
     default = list
 
@@ -361,6 +362,7 @@ class Database():
     def initial_migration_if_need(self, path):
         file_disk = Path(path)
         if not file_disk.exists():
+            file_disk.parent.mkdir(exist_ok=True, parents=True)
             self.save(self.default())
             debug_print("Initial migration done!")
 
