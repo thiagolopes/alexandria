@@ -1,9 +1,11 @@
 import alexandria as alx
 
 import tempfile
+import os
 from unittest import TestCase
 from unittest.mock import patch
-from alexandria import Webpage, Database
+from alexandria import (Webpage, Database,
+                        sanitize_datetime, sanitize_size, sanitize_title, sanitize_url)
 from datetime import datetime
 
 ENCODE = "utf-8"
@@ -26,9 +28,34 @@ class AlexandriaTestCase:
         cls.path, cls.html, cls.url = cls.tmp_html(None)
         alx.ALEXANDRIA_PATH = cls.path.name
         alx.MIRRORS_PATH = "/tmp/"
+        alx.DEBUG = False
 
     def tearDown(self):
         alx.DEBUG = False
+
+
+class TestSanitizers(TestCase):
+    def test_sanitize_title(self):
+        title = "Python | language\n"
+        expected_title = "Python - language"
+        self.assertEqual(sanitize_title(title), expected_title)
+
+    def test_sanitize_url(self):
+        url = "https://test-how-to-do-long-urls.com/whoistoolongurltoshoweverthingintheview.html"
+        self.assertEqual(sanitize_url(url), "test-how-to-do-long-urls.com/whoistoolongurlt(...)")
+
+    def test_sanitize_datetime(self):
+        today = datetime(1997, 1, 1)
+        self.assertEqual(sanitize_datetime(today), "01. January 1997 12:00AM")
+
+    def test_size(self):
+        sizes = (1024, #1KB
+                 1024*1024, #1MB
+                 1024*1024*1024, #1GB
+                 1024*1024*8,)
+        sizes_expected = ("1.0 KB", "1.0 MB", "1.1 GB", "8.4 MB")
+        for size, expected in zip(sizes, sizes_expected):
+            self.assertEqual(sanitize_size(size), expected)
 
 
 class TestDatabase(AlexandriaTestCase, TestCase):
@@ -48,10 +75,13 @@ class TestDatabase(AlexandriaTestCase, TestCase):
 
     @patch("alexandria.Database.add")
     def test_new_with_migration(self, add_mock):
-        database_path = self.path.name + "alx/database"
+        expected_dir = "/alx"
+        database_path = self.path.name + f"{expected_dir}/database"
+
         database = Database(database_path)
 
         add_mock.assert_not_called()
+        self.assertTrue(os.path.exists(self.path.name + expected_dir))
         self.assertEqual(database.path, database_path)
         self.assertEqual(len(database.data), 0)
 
@@ -87,16 +117,10 @@ class TestWebpage(AlexandriaTestCase, TestCase):
 
         self.assertEqual(webpage, webpage_two)
 
-    def test_sanitize_title(self):
-        webpage = Webpage(self.url)
-        webpage.title = "Python | language\n"
-
-        self.assertEqual(webpage.sanitize_title(), "Python - language")
-
     def test_to_md(self):
         webpage = Webpage(self.url)
-        expected_md = (f"| [Wikipedia - Python]({self.url}) | "
-                       f"{webpage.created_at.strftime(alx.DATETIME_FMT)} |")
+        created_at = sanitize_datetime(webpage.created_at)
+        expected_md = (f"| [Wikipedia - Python]({self.url}) | {(created_at)} |")
 
         self.assertEqual(webpage.to_md(), expected_md)
 

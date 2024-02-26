@@ -15,12 +15,10 @@ ALEXANDRIA_PATH = "alx/"
 DATABASE_PATH = ALEXANDRIA_PATH + "database"
 DATABASE_README = ALEXANDRIA_PATH + "README.md"
 MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
-DATETIME_FMT = "%d. %B %Y %I:%M%p"
 DEFAULT_PORT = 8000
 DEBUG = False
 EXIT_SUCCESS = 0
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
-KiB = 1000
 MAX_TRUNC = 45
 
 parser = argparse.ArgumentParser(prog="Alexandria",
@@ -32,7 +30,30 @@ parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, act
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 
-def border_msg(msg):
+def sanitize_title(title):
+    return title.replace("|", "-").replace("\n", "")
+
+def sanitize_size(num):
+    KiB = 1000
+    units = ("KB", "MB", "GB")
+    for u in units:
+        num /= KiB
+        if num > KiB:
+            continue
+        break
+    return f"{num:3.1f} {u}"
+
+def sanitize_url(url):
+    url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
+    if len(url) > MAX_TRUNC:
+        url = url[:MAX_TRUNC] + "(...)"
+    return url
+
+def sanitize_datetime(dt):
+    datetime_fmt = "%d. %B %Y %I:%M%p"
+    return dt.strftime(datetime_fmt)
+
+def border(msg):
     width = 25
     bordered_msg = "*" * width
     bordered_msg += f"\n{msg}\n"
@@ -44,7 +65,7 @@ def debug_print(log, border=False):
 
     if DEBUG:
         if border:
-            debug_msg = border_msg(debug_msg)
+            debug_msg = border(debug_msg)
         print(debug_msg)
 
 def title_print(title):
@@ -52,13 +73,12 @@ def title_print(title):
     title_msg = "\n" + border_print + f" {title} " + border_print
     print(title_msg)
 
+
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     server_version = "HTTPServerAlexandria"
-
     svg_icon = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
 <circle cx='50' cy='50' r='50'/>
 </svg>"""
-
     svg_logo = """<svg height='80px' width='80px' version='1.1'
 id='Capa_1' xmlns='http://www.w3.org/2000/svg'
 xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 425.45 425.45' xml:space='preserve'>
@@ -101,7 +121,6 @@ c15.835,10.017,25.536,11.79,40.03,11.796h0.066c14.494-0.006,24.195-1.779,40.03-1
 h9.869c17.365,0.021,31.487,14.154,31.487,31.524c0,17.383-14.142,31.525-31.525,31.525
 C273.766,72.016,259.696,60.63,258.043,47.153z'/>
 </svg>"""
-
     css = """
 *,
 *:before,
@@ -189,7 +208,6 @@ path {
   color: rgb(35, 63, 51);
   background: rgb(139, 228, 189);
 }"""
-
     html_template = """<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -219,7 +237,7 @@ path {
         if DEBUG:
             return super().log_message(fmt, *args)
 
-    def response(self, status_code, **context):
+    def response_index(self, status_code, **context):
         template = self.html_template.format(css=self.css, svg_icon=self.svg_icon, svg_logo=self.svg_logo, **context)
 
         self.send_response(status_code)
@@ -232,26 +250,9 @@ path {
 
         if url.path == "/":
             database = Database(DATABASE_PATH)
-            return self.response(200, table=database.to_html())
+            return self.response_index(200, table=database.to_html())
         return super().do_GET()
 
-def humanize_size(num):
-    units = ("KB", "MB", "GB")
-    for u in units:
-        num /= KiB
-        if num > KiB:
-            continue
-        break
-    return f"{num:3.1f} {u}"
-
-def humanize_url(url):
-    if len(url) > MAX_TRUNC:
-        url = url[:MAX_TRUNC] + "(...)"
-
-    return url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
-
-def humanize_datetime(dt):
-    return dt.strftime(DATETIME_FMT)
 
 class Webpage:
     title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
@@ -324,21 +325,23 @@ class Webpage:
         return total
 
     def to_html(self):
-        title = self.sanitize_title()
-        url = humanize_url(self.url)
+        title = sanitize_title(self.title)
+        url = sanitize_url(self.url)
+        full_path = self.full_path
+        size = sanitize_size(self.size)
+        created_at = sanitize_datetime(self.created_at)
         return f"""<tr>
             <td class="td_title">{title}</td>
-            <td><a href="{self.full_path}">{url}</a></td>
-            <td>{humanize_size(self.size)}</td>
-            <td>{humanize_datetime(self.created_at)}</td>
+            <td><a href="{full_path}">{url}</a></td>
+            <td>{size}</td>
+            <td>{created_at}</td>
             </tr>"""
 
-    def sanitize_title(self):
-        return self.title.replace("|", "-").replace("\n", "")
-
     def to_md(self):
-        title = self.sanitize_title()
-        return f"| [{title}]({self.url}) | {self.created_at.strftime(DATETIME_FMT)} |"
+        title = sanitize_title(self.title)
+        url = self.url
+        created_at = sanitize_datetime(self.created_at)
+        return f"| [{title}]({url}) | {created_at} |"
 
 
 class Database():
@@ -378,9 +381,9 @@ class Database():
         return table + " ".join(m.to_html() for m in self.data)
 
     def to_md(self):
-        today = datetime.now()
+        today = sanitize_datetime(datetime.now())
         md_body = "\n".join(m.to_md() for m in self.data)
-        return (f"# Alexandria - generated at {today.strftime(DATETIME_FMT)}\n"
+        return (f"# Alexandria - generated at {today}\n"
                 f"| Site | Created at |\n"
                 f"| ---- | ---------- |\n"
                 f"{md_body}\n")
