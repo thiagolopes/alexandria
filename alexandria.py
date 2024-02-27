@@ -1,7 +1,7 @@
 import argparse
 import html
 import os
-import pickle # REVIEW move to json?
+import pickle  # REVIEW move to json?
 import re
 import subprocess
 import sys
@@ -9,6 +9,7 @@ from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
+
 
 # NOTE TODO this is relative
 ALEXANDRIA_PATH = "alx/"
@@ -21,6 +22,7 @@ EXIT_SUCCESS = 0
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 MAX_TRUNC = 45
 
+
 parser = argparse.ArgumentParser(prog="Alexandria",
                                  description="A tool to manage your personal website backup libary",
                                  epilog="Keep and hold")
@@ -30,8 +32,10 @@ parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, act
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
 
+
 def sanitize_title(title):
     return title.replace("|", "-").replace("\n", "")
+
 
 def sanitize_size(num):
     KiB = 1000
@@ -43,15 +47,18 @@ def sanitize_size(num):
         break
     return f"{num:3.1f} {u}"
 
+
 def sanitize_url(url):
     url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
     if len(url) > MAX_TRUNC:
         url = url[:MAX_TRUNC] + "(...)"
     return url
 
+
 def sanitize_datetime(dt):
     datetime_fmt = "%d. %B %Y %I:%M%p"
     return dt.strftime(datetime_fmt)
+
 
 def border(msg):
     width = 25
@@ -60,6 +67,7 @@ def border(msg):
     bordered_msg += "*" * width
     return bordered_msg
 
+
 def debug_print(log, border=False):
     debug_msg = f"[DEBUG] {log}"
 
@@ -67,6 +75,7 @@ def debug_print(log, border=False):
         if border:
             debug_msg = border(debug_msg)
         print(debug_msg)
+
 
 def title_print(title):
     border_print = "*" * 8
@@ -403,11 +412,13 @@ class Database():
             # keeps its overwriting, redo keeping writing and append if it get wrost
             pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
+
 # NOTE Compatibility mode - will drop soon
 class WebsiteMirror(Database):
     pass
 class WebPage(Webpage):
     pass
+
 
 def serve(port):
     server = HTTPServerAlexandria
@@ -421,6 +432,7 @@ def serve(port):
             httpd.server_close()
             title_print(f"Alexandria server:{port} ended!")
             sys.exit(EXIT_SUCCESS)
+
 
 def process_download(url):
     urlp = urlparse(url)
@@ -443,10 +455,12 @@ def process_download(url):
     subprocess.run(wget_process, check=False)
     title_print(f"Finished {url}!!!")
 
+
 def generate_md_database(content):
     with open(DATABASE_README, "wb") as f:
         f.write(bytes(content, "utf-8"))
     debug_print(f"Database {DATABASE_README} generated...")
+
 
 if __name__ == "__main__":
     title_print("Alexandria")
