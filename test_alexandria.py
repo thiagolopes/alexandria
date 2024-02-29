@@ -14,18 +14,29 @@ DATABASE_DEFAULT = b"\x80\x05\x5D\x94."
 
 
 class AlexandriaTestCase:
-    def tmp_html(self):
-        tmp_path = tempfile.TemporaryDirectory("alexandria")
-        tmp_html = tempfile.NamedTemporaryFile("w+b", dir=tmp_path.name, suffix=".html", delete=False)
-        tmp_html.write(bytes(HTML_CONTENT, ENCODE))
+    def setup_db(self):
+        db_path = self.path.name + "/database"
+        with open(db_path, "wb") as f:
+            f.write(DATABASE_DEFAULT)
+        return db_path
 
-        path = tmp_path.name.split("/")[-1]
-        file = tmp_html.name.split("/")[-1]
-        return (tmp_path, file, f"http://{path}/{file}")
+    def setup_tmp_path(self):
+        return tempfile.TemporaryDirectory("alexandria")
+
+    def setup_html(self, path):
+        tmp_html = tempfile.NamedTemporaryFile("w+b", dir=path, suffix=".html", delete=False)
+        tmp_html.write(bytes(HTML_CONTENT, ENCODE))
+        html = tmp_html.name.split("/")[-1]
+        return html
 
     @classmethod
     def setUpClass(cls):
-        cls.path, cls.html, cls.url = cls.tmp_html(None)
+        cls.path = cls.setup_tmp_path(cls)
+        cls.html = cls.setup_html(cls, cls.path.name)
+
+        path = cls.path.name.split("/")[-1]
+        cls.url = f"http://{path}/{cls.html}"
+
         alx.ALEXANDRIA_PATH = cls.path.name
         alx.MIRRORS_PATH = "/tmp/"
         alx.DEBUG = False
@@ -49,10 +60,10 @@ class TestSanitizers(TestCase):
         self.assertEqual(sanitize_datetime(today), "01. January 1997 12:00AM")
 
     def test_size(self):
-        sizes = (1024, #1KB
-                 1024*1024, #1MB
-                 1024*1024*1024, #1GB
-                 1024*1024*8,)
+        sizes = (1024,            # 1KB
+                 1024*1024,       # 1MB
+                 1024*1024*1024,  # 1GB
+                 1024*1024*8,)    # 8,4MB
         sizes_expected = ("1.0 KB", "1.0 MB", "1.1 GB", "8.4 MB")
         for size, expected in zip(sizes, sizes_expected):
             self.assertEqual(sanitize_size(size), expected)
@@ -62,15 +73,12 @@ class TestDatabase(AlexandriaTestCase, TestCase):
     @patch("alexandria.Database.add")
     @patch("alexandria.Database.save")
     def test_new_without_migration(self, save_mock, add_mock):
-        database_path = self.path.name + "/database"
-        with open(database_path, "wb") as f:
-            f.write(DATABASE_DEFAULT)
-
-        database = Database(database_path)
+        db_path = self.setup_db()
+        database = Database(db_path)
 
         save_mock.assert_not_called()
         add_mock.assert_not_called()
-        self.assertEqual(database.path, database_path)
+        self.assertEqual(database.path, db_path)
         self.assertEqual(len(database.data), 0)
 
     @patch("alexandria.Database.add")
@@ -84,6 +92,19 @@ class TestDatabase(AlexandriaTestCase, TestCase):
         self.assertTrue(os.path.exists(self.path.name + expected_dir))
         self.assertEqual(database.path, database_path)
         self.assertEqual(len(database.data), 0)
+
+    def test_save(self):
+        db_path = self.setup_db()
+        database = Database(db_path)
+        webpage = Webpage(self.url)
+
+        database.add(webpage)
+        database.save()
+
+        self.assertEqual(database.data, [webpage])
+        with open(db_path, "rb") as f:
+            db = f.read()
+        self.assertNotEqual(db, DATABASE_DEFAULT)
 
 
 class TestWebpage(AlexandriaTestCase, TestCase):
