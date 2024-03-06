@@ -10,7 +10,6 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-
 # NOTE TODO this is relative
 ALEXANDRIA_PATH = "alx/"
 DATABASE_PATH = ALEXANDRIA_PATH + "database"
@@ -22,10 +21,7 @@ EXIT_SUCCESS = 0
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 MAX_TRUNC = 45
 
-
-parser = argparse.ArgumentParser(prog="Alexandria",
-                                 description="A tool to manage your personal website backup libary",
-                                 epilog="Keep and hold")
+parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
 parser.add_argument("website", help="An internet link (URL)", nargs="?",)
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
@@ -68,19 +64,22 @@ def border(msg):
     return bordered_msg
 
 
-def debug_print(log, border=False):
+def debug_print(log, add_border=False):
     debug_msg = f"[DEBUG] {log}"
 
     if DEBUG:
-        if border:
+        if add_border:
             debug_msg = border(debug_msg)
         print(debug_msg)
+
+    return debug_msg
 
 
 def title_print(title):
     border_print = "*" * 8
     title_msg = "\n" + border_print + f" {title} " + border_print
     print(title_msg)
+    return title_msg
 
 
 class HTTPServerAlexandria(SimpleHTTPRequestHandler):

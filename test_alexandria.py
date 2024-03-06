@@ -1,12 +1,13 @@
-import alexandria as alx
-
-import tempfile
 import os
+import tempfile
+from datetime import datetime
 from unittest import TestCase
 from unittest.mock import patch
-from alexandria import (Webpage, Database,
-                        sanitize_datetime, sanitize_size, sanitize_title, sanitize_url)
-from datetime import datetime
+
+import alexandria as alx
+from alexandria import (Database, Webpage, border, debug_print,
+                        sanitize_datetime, sanitize_size, sanitize_title,
+                        sanitize_url, title_print)
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
@@ -52,7 +53,7 @@ class TestSanitizers(TestCase):
         self.assertEqual(sanitize_title(title), expected_title)
 
     def test_sanitize_url(self):
-        url = "https://test-how-to-do-long-urls.com/whoistoolongurltoshoweverthingintheview.html"
+        url = r"https://test-how-to-do-long-urls.com/whoistoolongurltoshoweverthingint\heview.html"
         self.assertEqual(sanitize_url(url), "test-how-to-do-long-urls.com/whoistoolongurlt(...)")
 
     def test_sanitize_datetime(self):
@@ -67,6 +68,40 @@ class TestSanitizers(TestCase):
         sizes_expected = ("1.0 KB", "1.0 MB", "1.1 GB", "8.4 MB")
         for size, expected in zip(sizes, sizes_expected):
             self.assertEqual(sanitize_size(size), expected)
+
+
+class TestLog(AlexandriaTestCase, TestCase):
+    def test_border(self):
+        msg = border("Test msg")
+        border_msg = ("*" * 25)
+        expected_msg = border_msg + "\nTest msg\n" + border_msg
+
+        self.assertEqual(msg, expected_msg)
+
+    @patch("builtins.print")
+    def test_border_print_no_border(self, mock_print):
+        msg = debug_print("Test msg", add_border=False)
+        expected_msg = "[DEBUG] Test msg"
+
+        self.assertEqual(msg, expected_msg)
+        mock_print.assert_not_called()
+
+    @patch("builtins.print")
+    def test_border_print_border(self, mock_print):
+        alx.DEBUG = True
+        border_msg = ("*" * 25)
+        msg = debug_print("Test msg", add_border=True)
+        expected_msg = border_msg + "\n[DEBUG] Test msg\n" + border_msg
+
+        self.assertEqual(msg, expected_msg)
+        mock_print.assert_called_once()
+
+    @patch("builtins.print")
+    def test_title_print(self, mock_print):
+        title = title_print("Alexandria")
+        expected_title = "\n" + ("*" * 8) + " Alexandria " + ("*" * 8)
+
+        self.assertEqual(title, expected_title)
 
 
 class TestDatabase(AlexandriaTestCase, TestCase):
