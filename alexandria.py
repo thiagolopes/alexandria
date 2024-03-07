@@ -22,7 +22,7 @@ LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 MAX_TRUNC = 45
 
 parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
-parser.add_argument("website", help="An internet link (URL)", nargs="?",)
+parser.add_argument("website", help="An internet link (URL)", nargs="?")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
@@ -34,11 +34,14 @@ def sanitize_title(title):
 
 
 def sanitize_size(num):
-    KiB = 1000
-    units = ("KB", "MB", "GB")
+    if num == 0:
+        return "0 B"
+
+    KiB = 1024
+    units = ("KiB", "MiB", "GiB")
     for u in units:
         num /= KiB
-        if num > KiB:
+        if abs(num) >= KiB:
             continue
         break
     return f"{num:3.1f} {u}"

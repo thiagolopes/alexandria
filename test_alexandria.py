@@ -5,9 +5,8 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import alexandria as alx
-from alexandria import (Database, Webpage, border, debug_print,
-                        sanitize_datetime, sanitize_size, sanitize_title,
-                        sanitize_url, title_print)
+from alexandria import (Database, Webpage, border, debug_print, sanitize_datetime,
+                        sanitize_size, sanitize_title, sanitize_url, title_print)
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
@@ -61,11 +60,12 @@ class TestSanitizers(TestCase):
         self.assertEqual(sanitize_datetime(today), "01. January 1997 12:00AM")
 
     def test_size(self):
-        sizes = (1024,            # 1KB
-                 1024*1024,       # 1MB
-                 1024*1024*1024,  # 1GB
-                 1024*1024*8,)    # 8,4MB
-        sizes_expected = ("1.0 KB", "1.0 MB", "1.1 GB", "8.4 MB")
+        sizes = (0,
+                 1024,
+                 1024*1024,
+                 1024*1024*1024,
+                 1024*1024*8)
+        sizes_expected = ("0 B", "1.0 KiB", "1.0 MiB", "1.0 GiB", "8.0 MiB")
         for size, expected in zip(sizes, sizes_expected):
             self.assertEqual(sanitize_size(size), expected)
 
