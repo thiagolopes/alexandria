@@ -22,7 +22,7 @@ LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 MAX_TRUNC = 45
 
 parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
-parser.add_argument("website", help="An internet link (URL)", nargs="?")
+parser.add_argument("website", help="One or more internet links (URL)", nargs="*")
 parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
 parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
 parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
@@ -476,7 +476,7 @@ if __name__ == "__main__":
     title_print("Alexandria")
 
     args = parser.parse_args()
-    website = args.website
+    websites = args.website
     port = int(args.port)
     skip = args.skip
     generate_readme = args.readme
@@ -489,16 +489,17 @@ if __name__ == "__main__":
         sys.exit(EXIT_SUCCESS)
 
     # server it - bye!
-    if not website:
+    if not websites:
         serve(port)
         sys.exit(EXIT_SUCCESS)
 
     if skip and DEBUG:
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
-        process_download(website)
+        for website in websites:
+            process_download(website)
+            webpage = WebPage(website)
+            database.add(webpage)
 
-    webpage = WebPage(website)
-    database.add(webpage)
     database.save()
     generate_md_database(database.to_md())
