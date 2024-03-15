@@ -150,7 +150,6 @@ class TestWebpage(AlexandriaTestCase, TestCase):
 
         mock_stdout.assert_called_with(f"[DEBUG] [GENERATED] {webpage!r}")
         self.assertEqual(webpage.title, "Wikipedia - Python")
-        self.assertEqual(webpage.size, len(bytes(HTML_CONTENT, ENCODE)))
         self.assertEqual(webpage.url, self.url)
         self.assertEqual(webpage.base_path, self.path.name)
         self.assertEqual(webpage.full_path, (self.path.name + "/" + self.html))
@@ -187,3 +186,7 @@ class TestWebpage(AlexandriaTestCase, TestCase):
         self.assertIn(self.html, webpage.to_html())
         self.assertIn(webpage.title, webpage.to_html())
         self.assertIn("</tr>", webpage.to_html())
+
+    def test_calculate_size_disk(self):
+        webpage = Webpage(self.url)
+        self.assertEqual(webpage.calculate_size_disk(self.path.name), len(bytes(HTML_CONTENT, ENCODE)))
