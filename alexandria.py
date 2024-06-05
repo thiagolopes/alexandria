@@ -236,11 +236,11 @@ class Database():
             <th>Created at</th>
           </tr>\n"""
 
-        return table + " ".join(m.to_html() for m in self.data)
+        return table + " ".join(m.to_html() for m in self.data[::-1])
 
     def to_md(self):
         today = sanitize_datetime(datetime.now())
-        md_body = "\n".join(site.to_md_line() for site in self.data)
+        md_body = "\n".join(site.to_md_line() for site in self.data[::-1])
         return (f"# Alexandria - generated at {today}\n"
                 f"| Site | Created at |\n"
                 f"| ---- | ---------- |\n"
