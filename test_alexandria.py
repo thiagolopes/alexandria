@@ -141,6 +141,18 @@ class TestDatabase(AlexandriaTestCase, TestCase):
             db = f.read()
         self.assertNotEqual(db, DATABASE_DEFAULT)
 
+    def test_export(self):
+        database = Database(self.setup_db())
+        webpage = Webpage(self.url)
+
+        database.add(webpage)
+        database.save()
+
+        self.assertEqual(database.data, [webpage])
+        with open(database.export_file, "rb") as f:
+            md_file = f.read()
+        self.assertIn(bytes("Alexandria - generated at", ENCODE), md_file)
+
 
 class TestWebpage(AlexandriaTestCase, TestCase):
     @patch("builtins.print")
@@ -172,12 +184,12 @@ class TestWebpage(AlexandriaTestCase, TestCase):
 
         self.assertEqual(webpage, webpage_two)
 
-    def test_to_md(self):
+    def test_to_md_line(self):
         webpage = Webpage(self.url)
         created_at = sanitize_datetime(webpage.created_at)
         expected_md = (f"| [Wikipedia - Python]({self.url}) | {(created_at)} |")
 
-        self.assertEqual(webpage.to_md(), expected_md)
+        self.assertEqual(webpage.to_md_line(), expected_md)
 
     def test_to_html(self):
         webpage = Webpage(self.url)

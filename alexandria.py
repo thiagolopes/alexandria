@@ -22,13 +22,6 @@ EXIT_SUCCESS = 0
 LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 MAX_TRUNC = 45
 
-parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
-parser.add_argument("website", help="One or more internet links (URL)", nargs="*")
-parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
-parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
-parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
-parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
-
 
 def from_static(name):
     return f"./static/{name}"
@@ -46,9 +39,8 @@ def sanitize_size(num):
     units = ("KiB", "MiB", "GiB")
     for u in units:
         num /= KiB
-        if abs(num) >= KiB:
-            continue
-        break
+        if abs(num) < KiB:
+            break
     return f"{num:3.1f} {u}"
 
 
@@ -74,12 +66,10 @@ def border(msg):
 
 def debug_print(log, add_border=False):
     debug_msg = f"[DEBUG] {log}"
-
     if DEBUG:
         if add_border:
             debug_msg = border(debug_msg)
         print(debug_msg)
-
     return debug_msg
 
 
@@ -204,7 +194,7 @@ class Webpage:
             <td>{created_at}</td>
             </tr>"""
 
-    def to_md(self):
+    def to_md_line(self):
         title = sanitize_title(self.title)
         url = self.url
         created_at = sanitize_datetime(self.created_at)
@@ -212,16 +202,16 @@ class Webpage:
 
 
 class Database():
-    default = list
+    export_file = DATABASE_README
 
     def __init__(self, path):
         self.path = path
+        self.data = []
         self.initial_migration_if_need(path)
 
         with open(path, "rb") as f:
             db_file = pickle.load(f)
 
-        self.data = self.default()
         for entry in db_file:
             self.add(Webpage.from_webpage(entry))
         debug_print(f"Database loaded! - total: {len(self.data)}")
@@ -231,9 +221,10 @@ class Database():
 
     def initial_migration_if_need(self, path):
         file_disk = Path(path)
+
         if not file_disk.exists():
             file_disk.parent.mkdir(exist_ok=True, parents=True)
-            self.save(self.default())
+            self.save(self.data)
             debug_print("Initial migration done!")
 
     def to_html(self):
@@ -249,7 +240,7 @@ class Database():
 
     def to_md(self):
         today = sanitize_datetime(datetime.now())
-        md_body = "\n".join(m.to_md() for m in self.data)
+        md_body = "\n".join(site.to_md_line() for site in self.data)
         return (f"# Alexandria - generated at {today}\n"
                 f"| Site | Created at |\n"
                 f"| ---- | ---------- |\n"
@@ -269,6 +260,11 @@ class Database():
         with open(self.path, "wb") as f:
             # keeps its overwriting, redo keeping writing and append if it get wrost
             pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        debug_print("Saved.")
+
+        with open(self.export_file, "wb") as f_export:
+            f_export.write(bytes(self.to_md(), "utf-8"))
+        debug_print(f"Database {DATABASE_README} generated.")
 
 
 # NOTE Compatibility mode - will drop soon
@@ -323,7 +319,14 @@ def generate_md_database(content):
 if __name__ == "__main__":
     title_print("Alexandria")
 
+    parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
+    parser.add_argument("website", help="One or more internet links (URL)", nargs="*")
+    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
+    parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
     args = parser.parse_args()
+
     websites = args.website
     port = int(args.port)
     skip = args.skip
@@ -331,7 +334,6 @@ if __name__ == "__main__":
     DEBUG = args.verbose
 
     database = Database(DATABASE_PATH)
-
     if DEBUG and generate_readme:
         generate_md_database(database.to_md())
         sys.exit(EXIT_SUCCESS)
