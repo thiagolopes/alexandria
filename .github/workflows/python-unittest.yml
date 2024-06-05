@@ -1,0 +1,19 @@
+name: Run tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+
+    - name: install python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+
+    - name: run tests
+      run: python -m unittest
