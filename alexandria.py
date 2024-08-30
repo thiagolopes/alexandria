@@ -150,8 +150,16 @@ class Webpage:
         if path[-1] == "/":
             path = path[:-1]
 
-        matches_files = ["", ".html", "/index.html", ("/index.html@" + url.query + ".html")]
-        possibles_files = [Path(path + p) for p in matches_files]
+        possibles_files = [
+            Path(path),
+            Path(path + ".html"),
+            Path(path) / "index.html",
+            Path(path) / ("index.html@" + url.query + ".html"),
+        ]
+        if (not Path(path).is_dir()):
+            possibles_files += [p for p in Path(path).parent.glob("*.html")
+                                if url.query in str(p)]
+
         for f in possibles_files:
             if f.is_file():
                 return (MIRRORS_PATH + url.netloc), str(f)
