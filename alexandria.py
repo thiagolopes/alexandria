@@ -1,3 +1,4 @@
+#! /bin/python3
 import argparse
 import html
 import os
@@ -10,18 +11,37 @@ from functools import cached_property
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
+from dataclasses import dataclass, field
+from pathlib import Path
 
-# NOTE TODO this is relative
-ALEXANDRIA_PATH = "alx/"
-DATABASE_PATH = ALEXANDRIA_PATH + "database"
-DATABASE_README = ALEXANDRIA_PATH + "README.md"
-MIRRORS_PATH = ALEXANDRIA_PATH + "mirrors/"
-DEFAULT_PORT = 8000
-DEBUG = False
-EXIT_SUCCESS = 0
-LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
-MAX_TRUNC = 45
+DEBUG_PRINTER = False
 
+@dataclass
+class Preferences:
+    library_path: Path
+    generate_readme: bool
+
+    debug: bool = False
+    server_port: int = 8000
+    skip_download: bool = False # debug only 
+    db_file_name: str = "database"
+    readme_file_name: str = "README.md"
+    mirrors_path_name: str = "mirrors"
+
+    def __post_init__(self):
+        self.library_path = Path(self.library_path)
+
+    @property
+    def skip(self):
+        return self.debug and self.skip_download
+
+    @property
+    def db(self) -> Path:
+        return (Path(".") / self.library_path / self.db_file_name).absolute()
+
+    @property
+    def db_static(self) -> Path:
+        return (Path(".") / self.library_path / self.mirrors_path_name).absolute()
 
 def from_static(name):
     return f"./static/{name}"
@@ -44,10 +64,10 @@ def sanitize_size(num):
     return f"{num:3.1f} {u}"
 
 
-def sanitize_url(url):
+def sanitize_url(url, max_trunc=45):
     url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
-    if len(url) > MAX_TRUNC:
-        url = url[:MAX_TRUNC] + "(...)"
+    if len(url) > max_trunc:
+        url = url[:max_trunc] + "(...)"
     return url
 
 
@@ -66,7 +86,7 @@ def border(msg):
 
 def debug_print(log, add_border=False):
     debug_msg = f"[DEBUG] {log}"
-    if DEBUG:
+    if DEBUG_PRINTER:
         if add_border:
             debug_msg = border(debug_msg)
         print(debug_msg)
@@ -84,6 +104,7 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
     server_version = "HTTPServerAlexandria"
     template_name = from_static("index.html")
     stylesheet = from_static("index.css")
+    pref = None
 
     @cached_property
     def html_template(self):
@@ -91,7 +112,7 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
             return f.read()
 
     def log_message(self, fmt, *args):
-        if DEBUG:
+        if DEBUG_PRINTER:
             return super().log_message(fmt, *args)
 
     def response_index(self, status_code, **context):
@@ -106,7 +127,8 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
 
         if url.path == "/":
-            database = Database(DATABASE_PATH)
+            database = Database(self.pref.db, self.pref.db_static, self.pref.generate_readme)
+            database.load()
             return self.response_index(200, table=database.to_html())
         return super().do_GET()
 
@@ -114,9 +136,10 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
 class Webpage:
     title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
-    def __init__(self, url, created_at=None):
+    def __init__(self, url, path: Path, created_at=None):
         self.url = url
-        self.base_path, self.full_path = self.index_path(url)
+        self.path = path
+        self.base_path, self.full_path = self.index_path()
         self.title = self.grep_title_from_index()
         self.size = self.calculate_size_disk(self.base_path)
 
@@ -140,19 +163,17 @@ class Webpage:
         return self.url
 
     @classmethod
-    def from_webpage(cls, other):
+    def from_webpage(cls, other, path):
         # Re-crate mirror from other mirror - migrate
-        return cls(other.url, other.created_at)
+        return cls(other.url, path, other.created_at)
 
-    def index_path(self, url):
-        url = urlparse(url)
-        path = MIRRORS_PATH + url.netloc + url.path
-        if path[-1] == "/":
-            path = path[:-1]
+    def index_path(self):
+        url = urlparse(self.url)
 
+        path = self.path / Path(url.netloc) / Path(url.path.removeprefix("/").removesuffix("/"))
         possibles_files = [
             Path(path),
-            Path(path + ".html"),
+            Path(str(path) + ".html"),
             Path(path) / "index.html",
             Path(path) / ("index.html@" + url.query + ".html"),
         ]
@@ -162,7 +183,7 @@ class Webpage:
 
         for f in possibles_files:
             if f.is_file():
-                return (MIRRORS_PATH + url.netloc), str(f)
+                return (self.path / url.netloc), str(f)
         # TODO move to a exception
         assert False, ("unreachable - cound not determinate the html file!\n"
                        "check there is any option available: \n") + "\n".join(str(p) for p in possibles_files)
@@ -210,22 +231,25 @@ class Webpage:
 
 
 class Database():
-    export_file = DATABASE_README
-
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, database_file:Path, static: Path, export_file: str):
+        self.db_file = database_file
+        self.static_path = static
+        self.export_file = export_file
         self.data = []
-        self.initial_migration_if_need(path)
-
-        with open(path, "rb") as f:
-            db_file = pickle.load(f)
-
-        for entry in db_file:
-            self.add(Webpage.from_webpage(entry))
-        debug_print(f"Database loaded! - total: {len(self.data)}")
 
     def __iter__(self):
         return self.data.__iter__()
+
+    def load(self):
+        self.initial_migration_if_need(self.db_file)
+        with open(self.db_file, "rb") as f:
+            database = pickle.load(f)
+
+        for row in database:
+            self.add(Webpage.from_webpage(row, self.static_path))
+
+        assert len(database) == len(self.data)
+        debug_print(f"Database loaded! - total: {len(self.data)}")
 
     def initial_migration_if_need(self, path):
         file_disk = Path(path)
@@ -234,6 +258,26 @@ class Database():
             file_disk.parent.mkdir(exist_ok=True, parents=True)
             self.save(self.data)
             debug_print("Initial migration done!")
+
+    def add(self, mr):
+        if mr not in self.data:
+            self.data.append(mr)
+        else:
+            title_print(f"Skip add {mr.url}, already in")
+
+    def save(self, data=None):
+        if data is None:
+            data = self.data
+
+        debug_print("Saving mirrors-list on disk...")
+        with open(self.path, "wb") as f:
+            # keeps its overwriting, redo keeping writing and append if it get wrost
+            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        debug_print("Saved.")
+
+        with open(self.export_file, "wb") as f_export:
+            f_export.write(bytes(self.to_md(), "utf-8"))
+        debug_print(f"Database {database_file} generated.")
 
     def to_html(self):
         table = """<table>
@@ -254,27 +298,6 @@ class Database():
                 f"| ---- | ---------- |\n"
                 f"{md_body}\n")
 
-    def add(self, mr):
-        if mr not in self.data:
-            self.data.append(mr)
-        else:
-            title_print(f"Skip add {mr.url}, already in")
-
-    def save(self, data=None):
-        if data is None:
-            data = self.data
-
-        debug_print("Saving mirrors-list on disk...")
-        with open(self.path, "wb") as f:
-            # keeps its overwriting, redo keeping writing and append if it get wrost
-            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-        debug_print("Saved.")
-
-        with open(self.export_file, "wb") as f_export:
-            f_export.write(bytes(self.to_md(), "utf-8"))
-        debug_print(f"Database {DATABASE_README} generated.")
-
-
 # NOTE Compatibility mode - will drop soon
 class WebsiteMirror(Database):
     pass
@@ -282,31 +305,34 @@ class WebPage(Webpage):
     pass
 
 
-def serve(port):
-    server = HTTPServerAlexandria
-    title_print(f"Start server at {port}")
-    title_print(LINK_MASK.format(f"http://localhost:{port}", f"http://localhost:{port}"))
+def serve(pref: Preferences):
+    shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 
-    with HTTPServer(("", port), server) as httpd:
+    server = HTTPServerAlexandria
+    server.pref = pref
+    title_print(f"Start server at {pref.server_port}")
+    title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
+
+    with HTTPServer(("", pref.server_port), server) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             httpd.server_close()
-            title_print(f"Alexandria server:{port} ended!")
-            sys.exit(EXIT_SUCCESS)
+            title_print(f"Alexandria server:{pref.server_port} ended!")
+            sys.exit()
 
 
-def process_download(url):
+def process_download(url, mirror_path):
     urlp = urlparse(url)
     if not bool(urlp.scheme):
         title_print(f"Not valid url - {url}")
-        sys.exit(EXIT_SUCCESS)
+        sys.exit()
 
     domain = urlp.hostname
     title_print(f"Making a mirror of: {url} at {domain}")
 
     wget_process = (f"wget"
-                    f" -P {MIRRORS_PATH}"
+                    f" -P {mirrors_path}"
                     f" --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
                     f" -U 'Mozilla' -E -k"
                     f" -e robots=off --random-wait --no-cookies"
@@ -318,40 +344,38 @@ def process_download(url):
     title_print(f"Finished {url}!!!")
 
 
-def generate_md_database(content):
-    with open(DATABASE_README, "wb") as f:
+def generate_md_database(content, database_file):
+    with open(database_file, "wb") as f:
         f.write(bytes(content, "utf-8"))
-    debug_print(f"Database {DATABASE_README} generated...")
+    debug_print(f"Database {database_file} generated...")
 
 
 if __name__ == "__main__":
-    title_print("Alexandria")
+    title_print("Alexandria - CLI website preservation")
 
     parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
     parser.add_argument("website", help="One or more internet links (URL)", nargs="*")
-    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=DEFAULT_PORT, type=int)
-    parser.add_argument("-v", "--verbose", help="Enable verbose", default=DEBUG, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=Preferences.server_port, type=int)
+    parser.add_argument("-v", "--verbose", help="Enable verbose", default=Preferences.debug, action=argparse.BooleanOptionalAction, type=bool)
     parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
-    parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=False, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=True, action=argparse.BooleanOptionalAction, type=bool)
     args = parser.parse_args()
-
+    
     websites = args.website
-    port = int(args.port)
-    skip = args.skip
-    generate_readme = args.readme
-    DEBUG = args.verbose
+    pref = Preferences(library_path="alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
 
-    database = Database(DATABASE_PATH)
-    if DEBUG and generate_readme:
+    database = Database(pref.db, pref.db_static, pref.generate_readme)
+    database.load()
+    if pref.debug and pref.generate_readme:
         generate_md_database(database.to_md())
-        sys.exit(EXIT_SUCCESS)
+        sys.exit()
 
     # server it - bye!
     if not websites:
-        serve(port)
-        sys.exit(EXIT_SUCCESS)
+        serve(pref)
+        # sys.exit()
 
-    if skip and DEBUG:
+    if pref.skip:
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         for website in websites:
