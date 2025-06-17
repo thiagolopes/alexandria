@@ -137,7 +137,7 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
-class Webpage:
+class WebPage:
     title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
     def __init__(self, url, path: Path, created_at=None):
@@ -233,6 +233,12 @@ class Webpage:
         created_at = sanitize_datetime(self.created_at)
         return f"| [{title}]({url}) | {created_at} |"
 
+    def to_out(self):
+        return {
+            "url":self.url,
+            "created_at": self.created_at,
+        }
+
 
 class Database():
     def __init__(self, database_file:Path, static: Path, export_file: str):
@@ -250,10 +256,14 @@ class Database():
             database = pickle.load(f)
 
         for row in database:
-            self.add(Webpage.from_webpage(row, self.static_path))
-
+            if isinstance(row, WebPage):
+                # REMOVE, move to migration
+                debug_print(f"Database old loaded! - total: {len(self.data)}")
+                self.add(WebPage.from_webpage(row, self.static_path))
+            else:
+                debug_print(f"Database loaded! - total: {len(self.data)}")
+                self.add(WebPage(**row, path=self.static_path))
         assert len(database) == len(self.data)
-        debug_print(f"Database loaded! - total: {len(self.data)}")
 
     def initial_migration_if_need(self, path):
         file_disk = Path(path)
@@ -276,7 +286,8 @@ class Database():
         debug_print("Saving mirrors-list on disk...")
         with open(self.db_file, "wb") as f:
             # keeps its overwriting, redo keeping writing and append if it get wrost
-            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+            output_data = [d.to_out() for d in data]
+            pickle.dump(output_data, f, pickle.HIGHEST_PROTOCOL)
         debug_print("Saved.")
 
         with open(self.export_file, "wb") as f_export:
@@ -301,12 +312,6 @@ class Database():
                 f"| Site | Created at |\n"
                 f"| ---- | ---------- |\n"
                 f"{md_body}\n")
-
-# NOTE Compatibility mode - will drop soon
-class WebsiteMirror(Database):
-    pass
-class WebPage(Webpage):
-    pass
 
 
 def serve(pref: Preferences):
@@ -385,7 +390,7 @@ if __name__ == "__main__":
         for url in url_to_download :
             process_download(url, pref.db_static)
             webpage = WebPage(url, pref.db_static)
-            database.add(url)
+            database.add(webpage)
 
     database.save()
     generate_md_database(database.to_md(), pref.readme)
