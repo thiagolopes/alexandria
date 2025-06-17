@@ -2,7 +2,7 @@
 import argparse
 import html
 import os
-import pickle  # REVIEW move to json?
+import pickle
 import re
 import subprocess
 import sys
@@ -217,7 +217,7 @@ class Webpage:
     def to_html(self):
         title = sanitize_title(self.title)
         url = sanitize_url(self.url)
-        full_path = self.full_path
+        full_path = Path(self.full_path).relative_to(Path(".").absolute())
         size = sanitize_size(self.size)
         created_at = sanitize_datetime(self.created_at)
         return f"""<tr>
@@ -358,14 +358,14 @@ if __name__ == "__main__":
     title_print("Alexandria - CLI website preservation")
 
     parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
-    parser.add_argument("website", help="One or more internet links (URL)", nargs="*")
+    parser.add_argument("url", help="One or more internet links (URL)", nargs="*")
     parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=Preferences.server_port, type=int)
     parser.add_argument("-v", "--verbose", help="Enable verbose", default=Preferences.debug, action=argparse.BooleanOptionalAction, type=bool)
     parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
     parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=True, action=argparse.BooleanOptionalAction, type=bool)
     args = parser.parse_args()
     
-    websites = args.website
+    url_to_download = args.url
     pref = Preferences(library_path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
 
     database = Database(pref.db, pref.db_static, pref.readme)
@@ -375,17 +375,17 @@ if __name__ == "__main__":
         sys.exit()
 
     # server it - bye!
-    if not websites:
+    if not url_to_download:
         serve(pref)
         # sys.exit()
 
     if pref.skip:
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
-        for website in websites:
-            process_download(website, pref.db_static)
-            webpage = WebPage(website, pref.db_static)
-            database.add(webpage)
+        for url in url_to_download :
+            process_download(url, pref.db_static)
+            webpage = WebPage(url, pref.db_static)
+            database.add(url)
 
     database.save()
     generate_md_database(database.to_md(), pref.readme)
