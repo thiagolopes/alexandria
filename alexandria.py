@@ -36,12 +36,16 @@ class Preferences:
         return self.debug and self.skip_download
 
     @property
+    def readme(self) -> Path:
+        return (self.library_path / self.readme_file_name).absolute()
+
+    @property
     def db(self) -> Path:
-        return (Path(".") / self.library_path / self.db_file_name).absolute()
+        return (self.library_path / self.db_file_name).absolute()
 
     @property
     def db_static(self) -> Path:
-        return (Path(".") / self.library_path / self.mirrors_path_name).absolute()
+        return (self.library_path / self.mirrors_path_name).absolute()
 
 def from_static(name):
     return f"./static/{name}"
@@ -127,7 +131,7 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
 
         if url.path == "/":
-            database = Database(self.pref.db, self.pref.db_static, self.pref.generate_readme)
+            database = Database(self.pref.db, self.pref.db_static, self.pref.readme)
             database.load()
             return self.response_index(200, table=database.to_html())
         return super().do_GET()
@@ -270,14 +274,14 @@ class Database():
             data = self.data
 
         debug_print("Saving mirrors-list on disk...")
-        with open(self.path, "wb") as f:
+        with open(self.db_file, "wb") as f:
             # keeps its overwriting, redo keeping writing and append if it get wrost
             pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
         debug_print("Saved.")
 
         with open(self.export_file, "wb") as f_export:
             f_export.write(bytes(self.to_md(), "utf-8"))
-        debug_print(f"Database {database_file} generated.")
+        debug_print(f"Database {self.db_file} generated.")
 
     def to_html(self):
         table = """<table>
@@ -322,7 +326,7 @@ def serve(pref: Preferences):
             sys.exit()
 
 
-def process_download(url, mirror_path):
+def process_download(url, mirrors_path):
     urlp = urlparse(url)
     if not bool(urlp.scheme):
         title_print(f"Not valid url - {url}")
@@ -362,9 +366,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     websites = args.website
-    pref = Preferences(library_path="alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
+    pref = Preferences(library_path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
 
-    database = Database(pref.db, pref.db_static, pref.generate_readme)
+    database = Database(pref.db, pref.db_static, pref.readme)
     database.load()
     if pref.debug and pref.generate_readme:
         generate_md_database(database.to_md())
@@ -379,9 +383,9 @@ if __name__ == "__main__":
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         for website in websites:
-            process_download(website)
-            webpage = WebPage(website)
+            process_download(website, pref.db_static)
+            webpage = WebPage(website, pref.db_static)
             database.add(webpage)
 
     database.save()
-    generate_md_database(database.to_md())
+    generate_md_database(database.to_md(), pref.readme)
