@@ -3,6 +3,7 @@ import argparse
 import html
 import os
 import pickle
+import json
 import re
 import subprocess
 import sys
@@ -236,9 +237,68 @@ class WebPage:
     def to_out(self):
         return {
             "url":self.url,
-            "created_at": self.created_at,
+            "created_at": self.created_at.isoformat(),
         }
 
+
+class NeoDatabase():
+    def __init__(self, database_file: Path):
+        self.database_file = database_file
+        self.data = {} # memory database
+
+    def __contains__(self, value):
+        return bool(value in self.data)
+
+    def __getitem__(self, key):
+        return self.data.get(key)
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+
+    def initial_migration(self):
+        if self.database_file.exists():
+            return
+
+        self.database_file.touch()
+        self.save()
+
+    def save(self):
+        print("[DATABASE] Saving mirrors-list on disk...")
+        with open(self.database_file, "w") as db:
+            json.dump(self.data, db)
+        print("[DATABASE] Saved.")
+
+    def load(self):
+        with open(self.database_file, "rb") as f:
+            self.data = json.load(f)
+        print("[DATABASE] Load")
+
+    def insert_one(self, collection, data):
+        self.data.setdefault(collection, list()).append(data)
+
+    def find_one(self, collection, query):
+        if collection not in self.data:
+            return
+
+        for row in self.data[collection]:
+            if isinstance(query, dict) and isinstance(row, dict):
+                if all(row.get(k) == v for k, v in query.items()):
+                    return row
+            elif row == query:
+                return row
+
+# import random
+# ndb = NeoDatabase(Path("testsdb.json"))
+# ndb.initial_migration()
+# ndb.load()
+# print(ndb.find_one("random", 34))
+# print(ndb["version"])
+# ndb.insert_one("random", random.randint(0, 1000))
+# ndb.insert_one("website", {"url": "http://bin.com"})
+# ndb["version"] = 1
+# ndb.save()
+# print(ndb.find_one("website", {"url": "http://bin.com"}))
+# print(ndb.data)
 
 class Database():
     def __init__(self, database_file:Path, static: Path, export_file: str):
@@ -312,6 +372,7 @@ class Database():
                 f"| Site | Created at |\n"
                 f"| ---- | ---------- |\n"
                 f"{md_body}\n")
+
 
 
 def serve(pref: Preferences):
