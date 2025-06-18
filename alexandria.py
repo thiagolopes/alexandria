@@ -22,6 +22,7 @@ class Preferences:
     library_path: Path
     generate_readme: bool
 
+
     debug: bool = False
     server_port: int = 8000
     skip_download: bool = False # debug only 
@@ -50,35 +51,6 @@ class Preferences:
 
 def from_static(name):
     return f"./static/{name}"
-
-
-def sanitize_title(title):
-    return title.replace("|", "-").replace("\n", "")
-
-
-def sanitize_size(num):
-    if num == 0:
-        return "0 B"
-
-    KiB = 1024
-    units = ("KiB", "MiB", "GiB")
-    for u in units:
-        num /= KiB
-        if abs(num) < KiB:
-            break
-    return f"{num:3.1f} {u}"
-
-
-def sanitize_url(url, max_trunc=45):
-    url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
-    if len(url) > max_trunc:
-        url = url[:max_trunc] + "(...)"
-    return url
-
-
-def sanitize_datetime(dt):
-    datetime_fmt = "%d. %B %Y %I:%M%p"
-    return dt.strftime(datetime_fmt)
 
 
 def border(msg):
@@ -215,25 +187,6 @@ class WebPage:
                     total += e.stat().st_size
         return total
 
-    def to_html(self):
-        title = sanitize_title(self.title)
-        url = sanitize_url(self.url)
-        full_path = Path(self.full_path).relative_to(Path(".").absolute())
-        size = sanitize_size(self.size)
-        created_at = sanitize_datetime(self.created_at)
-        return f"""<tr>
-            <td class="td_title">{title}</td>
-            <td><a href="{full_path}">{url}</a></td>
-            <td>{size}</td>
-            <td>{created_at}</td>
-            </tr>"""
-
-    def to_md_line(self):
-        title = sanitize_title(self.title)
-        url = self.url
-        created_at = sanitize_datetime(self.created_at)
-        return f"| [{title}]({url}) | {created_at} |"
-
     def to_out(self):
         return {
             "url":self.url,
@@ -300,6 +253,78 @@ class NeoDatabase():
 # print(ndb.find_one("website", {"url": "http://bin.com"}))
 # print(ndb.data)
 
+class Exporter:
+    def __init__(self, websites):
+        self.websites = websites
+
+    def clean_title(self, title):
+        return title.replace("|", "-").replace("\n", "")
+
+    def humanize_size(self, num):
+        if num == 0:
+            return "0 B"
+
+        KiB = 1024
+        units = ("KiB", "MiB", "GiB")
+        for u in units:
+            num /= KiB
+            if abs(num) < KiB:
+                break
+        return f"{num:3.1f} {u}"
+
+    def trunc_url(self, url, max_trunc=45):
+        url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
+        if len(url) > max_trunc:
+            url = url[:max_trunc] + "(...)"
+        return url
+
+    def humanize_datetime(self, dt):
+        datetime_fmt = "%d. %B %Y %I:%M%p"
+        return dt.strftime(datetime_fmt)
+
+
+class MarkDownExporter(Exporter):
+    def website_md_line(self, website):
+        title = clean_title(website.title)
+        url = self.url
+        created_at = humanize_datetime(self.created_at)
+        return f"| [{title}]({url}) | {created_at} |"
+
+    def generate(self):
+        today = humanize_datetime(datetime.now())
+        md_table = "\n".join(self.website_md_line(web) for web in self.websites)
+        return (f"# Alexandria - generated at {today}\n"
+                "| Site | Created at |\n"
+                "| ---- | ---------- |\n"
+                f"{md_table}\n")
+
+class HtmlExporter(Exporter):
+    def website_detail_list(self, website):
+        title = self.clean_title(website.title)
+        url = trunc_url(website.url)
+        full_path = Path(website.full_path).relative_to(Path(".").absolute())
+        size = humanize_size(website.size)
+        created_at = humanize_datetime(website.created_at)
+
+        return f"""
+        <tr>
+            <td class="td_title">{title}</td>
+            <td><a href="{full_path}">{url}</a></td>
+            <td>{size}</td>
+            <td>{created_at}</td>
+        </tr>"""
+
+    def generate(self):
+        def to_html(self):
+            table = """<table>
+            <tr>
+            <th>Title</th>
+            <th>URL</th>
+            <th>Size</th>
+            <th>Created at</th>
+            </tr>\n"""
+            return table + " ".join(self.website_detail_list(web) for web in self.websites)
+
 class Database():
     def __init__(self, database_file:Path, static: Path, export_file: str):
         self.db_file = database_file
@@ -353,26 +378,6 @@ class Database():
         with open(self.export_file, "wb") as f_export:
             f_export.write(bytes(self.to_md(), "utf-8"))
         debug_print(f"Database {self.db_file} generated.")
-
-    def to_html(self):
-        table = """<table>
-          <tr>
-            <th>Title</th>
-            <th>URL</th>
-            <th>Size</th>
-            <th>Created at</th>
-          </tr>\n"""
-
-        return table + " ".join(m.to_html() for m in self.data[::-1])
-
-    def to_md(self):
-        today = sanitize_datetime(datetime.now())
-        md_body = "\n".join(site.to_md_line() for site in self.data[::-1])
-        return (f"# Alexandria - generated at {today}\n"
-                f"| Site | Created at |\n"
-                f"| ---- | ---------- |\n"
-                f"{md_body}\n")
-
 
 
 def serve(pref: Preferences):
