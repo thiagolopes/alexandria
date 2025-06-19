@@ -1,5 +1,6 @@
 #! /bin/python3
 import argparse
+from http import HTTPStatus
 import html
 import os
 import pickle
@@ -55,7 +56,7 @@ class Preferences:
         return Path("./static")
 
 
-def from_static(name):
+def static_file(name):
     return f"./static/{name}"
 
 
@@ -83,11 +84,10 @@ def title_print(title):
     return title_msg
 
 
-class HTTPServerAlexandria(SimpleHTTPRequestHandler):
-    server_version = "HTTPServerAlexandria"
-    template_name = from_static("index.html")
-    stylesheet = from_static("index.css")
-    pref = None
+class AlexandriaStaticServer(SimpleHTTPRequestHandler):
+    template_name = static_file("index.html")
+    stylesheet = static_file("index.css")
+    debug = False
 
     @cached_property
     def html_template(self):
@@ -95,24 +95,22 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
             return f.read()
 
     def log_message(self, fmt, *args):
-        if DEBUG_PRINTER:
+        if self.debug:
             return super().log_message(fmt, *args)
 
-    def response_index(self, status_code, **context):
-        template = self.html_template.format(css=self.stylesheet, **context)
-
+    def response(self, status_code, content, content_type="text/html"):
         self.send_response(status_code)
-        self.send_header("Content-type", "text/html")
+        self.send_header("Content-type", content_type)
         self.end_headers()
-        self.wfile.write(bytes(template, "utf-8"))
+        self.wfile.write(bytes(content, "utf-8"))
+
+    def index(self):
+        # template = self.html_template.format(css=self.stylesheet, **context)
+        return self.response(HTTPStatus.OK, "<p>hi!<p>")
 
     def do_GET(self):
-        url = urlparse(self.path)
-
-        if url.path == "/":
-            database = Database(self.pref.db, self.pref.db_statics, self.pref.readme)
-            database.load()
-            return self.response_index(200, table=database.to_html())
+        if self.path == "/":
+            return self.index()
         return super().do_GET()
 
 
@@ -291,13 +289,13 @@ class Exporter:
 
 class MarkDownExporter(Exporter):
     def website_md_line(self, website):
-        title = clean_title(website.title)
+        title = self.clean_title(website.title)
         url = self.url
-        created_at = humanize_datetime(self.created_at)
+        created_at = self.humanize_datetime(self.created_at)
         return f"| [{title}]({url}) | {created_at} |"
 
     def generate(self):
-        today = humanize_datetime(datetime.now())
+        today = self.humanize_datetime(datetime.now())
         md_table = "\n".join(self.website_md_line(web) for web in self.websites)
         return (f"# Alexandria - generated at {today}\n"
                 "| Site | Created at |\n"
@@ -307,10 +305,10 @@ class MarkDownExporter(Exporter):
 class HtmlExporter(Exporter):
     def website_detail_list(self, website):
         title = self.clean_title(website.title)
-        url = trunc_url(website.url)
+        url = self.trunc_url(website.url)
         full_path = Path(website.full_path).relative_to(Path(".").absolute())
-        size = humanize_size(website.size)
-        created_at = humanize_datetime(website.created_at)
+        size = self.humanize_size(website.size)
+        created_at = self.humanize_datetime(website.created_at)
 
         return f"""
         <tr>
@@ -386,21 +384,20 @@ class Database():
         debug_print(f"Database {self.db_file} generated.")
 
 
-def serve(pref: Preferences):
+def run_server(port, debug, server = HTTPServer, handler = AlexandriaStaticServer):
     shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 
-    server = HTTPServerAlexandria
-    server.pref = pref
-    title_print(f"Start server at {pref.server_port}")
-    title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
-
-    with HTTPServer(("", pref.server_port), server) as httpd:
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            httpd.server_close()
-            title_print(f"Alexandria server:{pref.server_port} ended!")
-            sys.exit()
+    # title_print(f"Start server at {pref.server_port}")
+    # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
+    server_addr = ("", port)
+    handler.debug = debug
+    httpd = server(server_addr, handler)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        httpd.server_close()
+        # title_print(f"Alexandria server:{pref.server_port} ended!")
+        sys.exit()
 
 
 def process_download(url, mirrors_path):
@@ -447,7 +444,7 @@ if __name__ == "__main__":
 
     # server it - bye!
     if not url_to_download:
-        serve(pref)
+        run_server(pref.server_port, debug=pref.debug)
         sys.exit()
 
     if pref.skip:
