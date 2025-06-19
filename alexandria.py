@@ -329,64 +329,9 @@ class HtmlExporter(Exporter):
             </tr>\n"""
             return table + " ".join(self.website_detail_list(web) for web in self.websites)
 
-class Database():
-    def __init__(self, database_file:Path, static: Path, export_file: str):
-        self.db_file = database_file
-        self.static_path = static
-        self.export_file = export_file
-        self.data = []
-
-    def __iter__(self):
-        return self.data.__iter__()
-
-    def load(self):
-        self.initial_migration_if_need(self.db_file)
-        with open(self.db_file, "rb") as f:
-            database = pickle.load(f)
-
-        for row in database:
-            if isinstance(row, WebPage):
-                # REMOVE, move to migration
-                debug_print(f"Database old loaded! - total: {len(self.data)}")
-                self.add(WebPage.from_webpage(row, self.static_path))
-            else:
-                debug_print(f"Database loaded! - total: {len(self.data)}")
-                self.add(WebPage(**row, path=self.static_path))
-        assert len(database) == len(self.data)
-
-    def initial_migration_if_need(self, path):
-        file_disk = Path(path)
-
-        if not file_disk.exists():
-            file_disk.parent.mkdir(exist_ok=True, parents=True)
-            self.save(self.data)
-            debug_print("Initial migration done!")
-
-    def add(self, mr):
-        if mr not in self.data:
-            self.data.append(mr)
-        else:
-            title_print(f"Skip add {mr.url}, already in")
-
-    def save(self, data=None):
-        if data is None:
-            data = self.data
-
-        debug_print("Saving mirrors-list on disk...")
-        with open(self.db_file, "wb") as f:
-            # keeps its overwriting, redo keeping writing and append if it get wrost
-            output_data = [d.to_out() for d in data]
-            pickle.dump(output_data, f, pickle.HIGHEST_PROTOCOL)
-        debug_print("Saved.")
-
-        with open(self.export_file, "wb") as f_export:
-            f_export.write(bytes(self.to_md(), "utf-8"))
-        debug_print(f"Database {self.db_file} generated.")
-
 
 def run_server(port, debug, server = HTTPServer, handler = AlexandriaStaticServer):
-    shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
-
+    # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
     server_addr = ("", port)
