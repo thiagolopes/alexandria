@@ -19,7 +19,7 @@ from pathlib import Path
 DEBUG_PRINTER = False
 
 @dataclass
-class Preferences:
+class ConfigManager:
     path: Path
     generate_readme: bool = True
     readme_name: str = "README.md"
@@ -105,8 +105,10 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         self.wfile.write(bytes(content, "utf-8"))
 
     def index(self):
-        # template = self.html_template.format(css=self.stylesheet, **context)
-        return self.response(HTTPStatus.OK, "<p>hi!<p>")
+        alx = Alexandria()
+        exporter = HTMLExporter(alx.websites_on_bunker())
+        content = self.html_template.format(css=self.stylesheet, table=exporter)
+        return self.response(HTTPStatus.OK, content)
 
     def do_GET(self):
         if self.path == "/":
@@ -302,7 +304,7 @@ class MarkDownExporter(Exporter):
                 "| ---- | ---------- |\n"
                 f"{md_table}\n")
 
-class HtmlExporter(Exporter):
+class HTMLExporter(Exporter):
     def website_detail_list(self, website):
         title = self.clean_title(website.title)
         url = self.trunc_url(website.url)
@@ -319,15 +321,19 @@ class HtmlExporter(Exporter):
         </tr>"""
 
     def generate(self):
-        def to_html(self):
-            table = """<table>
+        table = """<table>
             <tr>
             <th>Title</th>
             <th>URL</th>
             <th>Size</th>
             <th>Created at</th>
             </tr>\n"""
-            return table + " ".join(self.website_detail_list(web) for web in self.websites)
+        return table + " ".join(self.website_detail_list(web) for web in self.websites)
+
+
+class Alexandria:
+    def __init__(self):
+        pass
 
 
 def run_server(port, debug, server = HTTPServer, handler = AlexandriaStaticServer):
@@ -345,25 +351,25 @@ def run_server(port, debug, server = HTTPServer, handler = AlexandriaStaticServe
         sys.exit()
 
 
-def process_download(url, mirrors_path):
+def download_website_static(url, mirrors_path):
     urlp = urlparse(url)
     if not bool(urlp.scheme):
-        title_print(f"Not valid url - {url}")
+        # title_print(f"Not valid url - {url}")
         sys.exit()
 
     domain = urlp.hostname
-    title_print(f"Making a mirror of: {url} at {domain}")
+    # title_print(f"Making a mirror of: {url} at {domain}")
 
-    process = ["wget"]
-    process.extend(["-P", str(mirrors_path)])
-    process.extend(["--mirror","-p","--recursive", "-l","1","--page-requisites","--adjust-extension","--span-hosts"])
-    process.extend(["-U", "'Mozilla'", "-E", "-k"])
-    process.extend(["-e","robots=off","--random-wait","--no-cookies"])
-    process.extend(["--convert-links", "--restrict-file-names=windows", "--domains", str(domain)])
-    process.extend(["--no-parent", str(url)])
+    cmd = ["wget"]
+    cmd.extend(["-P", str(mirrors_path)])
+    cmd.extend(["--mirror","-p","--recursive", "-l","1","--page-requisites","--adjust-extension","--span-hosts"])
+    cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
+    cmd.extend(["-e","robots=off","--random-wait","--no-cookies"])
+    cmd.extend(["--convert-links", "--restrict-file-names=windows", "--domains", str(domain)])
+    cmd.extend(["--no-parent", str(url)])
 
-    debug_print("command: {}".format(" ".join(wget_process)))
-    subprocess.run(wget_process, check=False)
+    debug_print("command: {}".format(" ".join(cmd)))
+    subprocess.run(cmd, check=False)
     title_print(f"Finished {url}!!!")
 
 
@@ -378,14 +384,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
     parser.add_argument("url", help="One or more internet links (URL)", nargs="*")
-    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=Preferences.server_port, type=int)
-    parser.add_argument("-v", "--verbose", help="Enable verbose", default=Preferences.debug, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=ConfigManager.server_port, type=int)
+    parser.add_argument("-v", "--verbose", help="Enable verbose", default=ConfigManager.debug, action=argparse.BooleanOptionalAction, type=bool)
     parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
     parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=True, action=argparse.BooleanOptionalAction, type=bool)
     args = parser.parse_args()
     
     url_to_download = args.url
-    pref = Preferences(path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
+    pref = ConfigManager(path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
 
     # server it - bye!
     if not url_to_download:
@@ -396,7 +402,7 @@ if __name__ == "__main__":
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         for url in url_to_download :
-            process_download(url, pref.db_statics)
+            download_website_static(url, pref.db_statics)
             webpage = WebPage(url, pref.db_statics)
             database.add(webpage)
 

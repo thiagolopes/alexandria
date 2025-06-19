@@ -6,9 +6,8 @@ from unittest.mock import patch
 from dataclasses import asdict
 
 from pathlib import Path
-import alexandria as alx
 
-from alexandria import Preferences, NeoDatabase
+from alexandria import ConfigManager, NeoDatabase
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
@@ -19,7 +18,7 @@ class PreferenceTest(TestCase):
         tmp_path_k = tempfile.TemporaryDirectory("alexandria")
         tmp_path_k.cleanup()
         tmp_path = tmp_path_k.name
-        pref = Preferences(path=tmp_path)
+        pref = ConfigManager(path=tmp_path)
 
         self.assertDictEqual(asdict(pref), {
             'path': Path(tmp_path),
@@ -110,7 +109,7 @@ class DatabaseTest(TestCase):
 #     @classmethod
 #     def setUpClass(cls):
 #         cls.tmp_path = tempfile.TemporaryDirectory("alexandria")
-#         pref = Preferences(cls.tmp_path.name, generate_readme=True, debug=False)
+#         pref = ConfigManager(cls.tmp_path.name, generate_readme=True, debug=False)
 #         pref.db_static.mkdir()
 
 #         cls.pref = pref
