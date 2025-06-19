@@ -19,35 +19,41 @@ DEBUG_PRINTER = False
 
 @dataclass
 class Preferences:
-    library_path: Path
-    generate_readme: bool
-
+    path: Path
+    generate_readme: bool = True
+    readme_name: str = "README.md"
 
     debug: bool = False
     server_port: int = 8000
+
     skip_download: bool = False # debug only 
-    db_file_name: str = "database"
-    readme_file_name: str = "README.md"
-    mirrors_path_name: str = "mirrors"
+
+    db_name: str = "database"
+    db_statics_name: str = "mirrors"
 
     def __post_init__(self):
-        self.library_path = Path(self.library_path)
+        self.path = Path(self.path)
 
     @property
     def skip(self):
         return self.debug and self.skip_download
 
     @property
-    def readme(self) -> Path:
-        return (self.library_path / self.readme_file_name).absolute()
-
-    @property
     def db(self) -> Path:
-        return (self.library_path / self.db_file_name).absolute()
+        return (self.path / self.db_name).absolute()
 
     @property
-    def db_static(self) -> Path:
-        return (self.library_path / self.mirrors_path_name).absolute()
+    def db_statics(self) -> Path:
+        return (self.path / self.db_statics_name).absolute()
+
+    @property
+    def readme(self) -> Path:
+        return (self.path / self.readme_name).absolute()
+
+    @property
+    def statics_server(self) -> Path:
+        return Path("./static")
+
 
 def from_static(name):
     return f"./static/{name}"
@@ -104,7 +110,7 @@ class HTTPServerAlexandria(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
 
         if url.path == "/":
-            database = Database(self.pref.db, self.pref.db_static, self.pref.readme)
+            database = Database(self.pref.db, self.pref.db_statics, self.pref.readme)
             database.load()
             return self.response_index(200, table=database.to_html())
         return super().do_GET()
@@ -216,15 +222,15 @@ class NeoDatabase():
         self.save()
 
     def save(self):
-        print("[DATABASE] Saving mirrors-list on disk...")
+        # print("[DATABASE] Saving mirrors-list on disk...")
         with open(self.database_file, "w") as db:
             json.dump(self.data, db)
-        print("[DATABASE] Saved.")
+        # print("[DATABASE] Saved.")
 
     def load(self):
         with open(self.database_file, "rb") as f:
             self.data = json.load(f)
-        print("[DATABASE] Load")
+        # print("[DATABASE] Load")
 
     def insert_one(self, collection, data):
         self.data.setdefault(collection, list()).append(data)
@@ -406,13 +412,13 @@ def process_download(url, mirrors_path):
     domain = urlp.hostname
     title_print(f"Making a mirror of: {url} at {domain}")
 
-    wget_process = (f"wget"
-                    f" -P {mirrors_path}"
-                    f" --mirror -p --recursive -l 1 --page-requisites --adjust-extension --span-hosts"
-                    f" -U 'Mozilla' -E -k"
-                    f" -e robots=off --random-wait --no-cookies"
-                    f" --convert-links --restrict-file-names=windows --domains {domain}"
-                    f" --no-parent {url}".split(" "))
+    process = ["wget"]
+    process.extend(["-P", str(mirrors_path)])
+    process.extend(["--mirror","-p","--recursive", "-l","1","--page-requisites","--adjust-extension","--span-hosts"])
+    process.extend(["-U", "'Mozilla'", "-E", "-k"])
+    process.extend(["-e","robots=off","--random-wait","--no-cookies"])
+    process.extend(["--convert-links", "--restrict-file-names=windows", "--domains", str(domain)])
+    process.extend(["--no-parent", str(url)])
 
     debug_print("command: {}".format(" ".join(wget_process)))
     subprocess.run(wget_process, check=False)
@@ -437,25 +443,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     url_to_download = args.url
-    pref = Preferences(library_path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
-
-    database = Database(pref.db, pref.db_static, pref.readme)
-    database.load()
-    if pref.debug and pref.generate_readme:
-        generate_md_database(database.to_md())
-        sys.exit()
+    pref = Preferences(path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
 
     # server it - bye!
     if not url_to_download:
         serve(pref)
-        # sys.exit()
+        sys.exit()
 
     if pref.skip:
         debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
     else:
         for url in url_to_download :
-            process_download(url, pref.db_static)
-            webpage = WebPage(url, pref.db_static)
+            process_download(url, pref.db_statics)
+            webpage = WebPage(url, pref.db_statics)
             database.add(webpage)
 
     database.save()
