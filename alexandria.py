@@ -3,7 +3,6 @@ import argparse
 from http import HTTPStatus
 import html
 import os
-import pickle
 import json
 import re
 import subprocess
@@ -11,12 +10,18 @@ import sys
 from datetime import datetime
 from functools import cached_property
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from pathlib import Path
 from urllib.parse import urlparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from enum import Flag, auto
 
-DEBUG_PRINTER = False
+
+class ProcessChoices(Flag):
+    SERVE = auto()
+    SNAPSHOT_WEBSITE = auto()
+    GENERATE_MARKDOWN = auto()
+    GENERATE_THUMBNAIL = auto()
+
 
 @dataclass
 class ConfigManager:
@@ -27,7 +32,7 @@ class ConfigManager:
     debug: bool = False
     server_port: int = 8000
 
-    skip_download: bool = False # debug only 
+    skip_download: bool = False  # debug only
 
     db_name: str = "database"
     db_statics_name: str = "mirrors"
@@ -55,65 +60,91 @@ class ConfigManager:
     def statics_server(self) -> Path:
         return Path("./static")
 
-
 def static_file(name):
     return f"./static/{name}"
 
+class SnapshotStaticNotFound(Exception):
+    pass
 
-def border(msg):
-    width = 25
-    bordered_msg = "*" * width
-    bordered_msg += f"\n{msg}\n"
-    bordered_msg += "*" * width
-    return bordered_msg
+class SnapshotStaticsFiles:
+    def __init__(self, path):
+        self.base_path = Path(path)
+
+    def __iter__(self):
+        for directory in self.base_path.iterdir():
+            if directory.is_dir():
+                yield directory
+
+    def list_all_snapshot_domains(self) -> list[str]:
+        for directory in self.__iter__():
+            yield directory.name
+
+    def resolve_url_to_static_file(self, url) -> Path:
+        url_p = urlparse(url)
+        path = self.base_path / Path(f"{url_p.netloc}/{url_p.path}")
+        if not path.exists():
+            raise SnapshotStaticNotFound(f"url {url} not found in statics {path}")
+        return path
+
+    def resolve_entry_point(self, url) -> Path:
+        url_p = urlparse(url)
+        base_path = self.resolve_url_to_static_file(url)
+
+        possibles_files = base_path.glob("index.html*")
+        for f in possibles_files:
+            if f.is_file():
+                return f
+
+        raise SnapshotStaticNotFound(
+            "unreachable - cound not determinate the html file!\n"
+            "check there is any option available: \n"
+            "\n".join(str(p) for p in possibles_files)
+        )
 
 
-def debug_print(log, add_border=False):
-    debug_msg = f"[DEBUG] {log}"
-    if DEBUG_PRINTER:
-        if add_border:
-            debug_msg = border(debug_msg)
-        print(debug_msg)
-    return debug_msg
+    def size_by_domain(self, url) -> int:
+        path = self.resolve_url_to_static_file(url)
+        return self._directory_size(path)
+
+    def _directory_size(self, path) -> int:
+        total = 0
+        for e in path.iterdir():
+            if e.is_dir():
+                total += self._directory_size(e)
+            if e.is_file():
+                total += e.stat().st_size
+        return total
 
 
-def title_print(title):
-    border_print = "*" * 8
-    title_msg = "\n" + border_print + f" {title} " + border_print
-    print(title_msg)
-    return title_msg
 
+ss = SnapshotStaticsFiles("./alx/mirrors")
+print(list(ss.list_all_snapshot_domains()))
+print(ss._directory_size(ss.base_path))
+url = "https://bruop.github.io/frustum_culling/"
+print(ss.size_by_domain(url))
+print(ss.resolve_entry_point(url))
+print(ss.size_by_domain("dsdsdfshu"))
 
-class AlexandriaStaticServer(SimpleHTTPRequestHandler):
-    template_name = static_file("index.html")
-    stylesheet = static_file("index.css")
-    debug = False
+class SnapshotPage:
+    website_url: str
+    created_at: datetime
+    size: int
+    title: str
 
-    @cached_property
-    def html_template(self):
-        with open(self.template_name, "r") as f:
-            return f.read()
+    def __hash__(self):
+        return hash(self.website_url)
 
-    def log_message(self, fmt, *args):
-        if self.debug:
-            return super().log_message(fmt, *args)
+    def __eq__(self, other):
+        return other.website_url == self.website_url
 
-    def response(self, status_code, content, content_type="text/html"):
-        self.send_response(status_code)
-        self.send_header("Content-type", content_type)
-        self.end_headers()
-        self.wfile.write(bytes(content, "utf-8"))
+    def __repr__(self):
+        return f"<SnapshotPage websit={self.url}>"
 
-    def index(self):
-        alx = Alexandria()
-        exporter = HTMLExporter(alx.websites_on_bunker())
-        content = self.html_template.format(css=self.stylesheet, table=exporter)
-        return self.response(HTTPStatus.OK, content)
+    def __str__(self):
+        return self.url
 
-    def do_GET(self):
-        if self.path == "/":
-            return self.index()
-        return super().do_GET()
+    def from_html_file(cls, html_file, url, created_at, size):
+        pass
 
 
 class WebPage:
@@ -127,10 +158,10 @@ class WebPage:
         self.size = self.calculate_size_disk(self.base_path)
 
         if created_at is None:
-            debug_print(f"[GENERATED] {self!r}")
+            # debug_print(f"[GENERATED] {self!r}")
             self.created_at = datetime.now()
         else:
-            debug_print(f"[RELOADED] {self!r}")
+            # debug_print(f"[RELOADED] {self!r}")
             self.created_at = created_at
 
     def __hash__(self):
@@ -153,23 +184,30 @@ class WebPage:
     def index_path(self):
         url = urlparse(self.url)
 
-        path = self.path / Path(url.netloc) / Path(url.path.removeprefix("/").removesuffix("/"))
+        path = (
+            self.path
+            / Path(url.netloc)
+            / Path(url.path.removeprefix("/").removesuffix("/"))
+        )
         possibles_files = [
             Path(path),
             Path(str(path) + ".html"),
             Path(path) / "index.html",
             Path(path) / ("index.html@" + url.query + ".html"),
         ]
-        if (not Path(path).is_dir()):
-            possibles_files += [p for p in Path(path).parent.glob("*.html")
-                                if url.query in str(p)]
+        if not Path(path).is_dir():
+            possibles_files += [
+                p for p in Path(path).parent.glob("*.html") if url.query in str(p)
+            ]
 
         for f in possibles_files:
             if f.is_file():
                 return (self.path / url.netloc), str(f)
         # TODO move to a exception
-        assert False, ("unreachable - cound not determinate the html file!\n"
-                       "check there is any option available: \n") + "\n".join(str(p) for p in possibles_files)
+        assert False, (
+            "unreachable - cound not determinate the html file!\n"
+            "check there is any option available: \n"
+        ) + "\n".join(str(p) for p in possibles_files)
 
     def grep_title_from_index(self):
         file_text = ""
@@ -180,8 +218,10 @@ class WebPage:
                 if f:
                     return html.unescape(f.groups()[0])
         # TODO move to a exception
-        assert False, (f"unreachable - do not found <title> in the html\n"
-                       f"-> {self.url} NEED be a staticpage!")
+        assert False, (
+            f"unreachable - do not found <title> in the html\n"
+            f"-> {self.url} NEED be a staticpage!"
+        )
 
     def calculate_size_disk(self, path):
         total = 0
@@ -195,15 +235,15 @@ class WebPage:
 
     def to_out(self):
         return {
-            "url":self.url,
+            "url": self.url,
             "created_at": self.created_at.isoformat(),
         }
 
 
-class NeoDatabase():
+class NeoDatabase:
     def __init__(self, database_file: Path):
         self.database_file = database_file
-        self.data = {} # memory database
+        self.data = {}  # memory database
 
     def __contains__(self, value):
         return bool(value in self.data)
@@ -224,7 +264,7 @@ class NeoDatabase():
     def save(self):
         # print("[DATABASE] Saving mirrors-list on disk...")
         with open(self.database_file, "w") as db:
-            json.dump(self.data, db)
+            json.dump(self.data, db, indent=4)
         # print("[DATABASE] Saved.")
 
     def load(self):
@@ -245,19 +285,10 @@ class NeoDatabase():
                     return row
             elif row == query:
                 return row
-
-# import random
-# ndb = NeoDatabase(Path("testsdb.json"))
-# ndb.initial_migration()
-# ndb.load()
-# print(ndb.find_one("random", 34))
-# print(ndb["version"])
-# ndb.insert_one("random", random.randint(0, 1000))
-# ndb.insert_one("website", {"url": "http://bin.com"})
-# ndb["version"] = 1
-# ndb.save()
-# print(ndb.find_one("website", {"url": "http://bin.com"}))
-# print(ndb.data)
+db = NeoDatabase("./alx/database.json")
+db.load()
+db.save()
+exit()
 
 class Exporter:
     def __init__(self, websites):
@@ -299,10 +330,13 @@ class MarkDownExporter(Exporter):
     def generate(self):
         today = self.humanize_datetime(datetime.now())
         md_table = "\n".join(self.website_md_line(web) for web in self.websites)
-        return (f"# Alexandria - generated at {today}\n"
-                "| Site | Created at |\n"
-                "| ---- | ---------- |\n"
-                f"{md_table}\n")
+        return (
+            f"# Alexandria - generated at {today}\n"
+            "| Site | Created at |\n"
+            "| ---- | ---------- |\n"
+            f"{md_table}\n"
+        )
+
 
 class HTMLExporter(Exporter):
     def website_detail_list(self, website):
@@ -332,16 +366,54 @@ class HTMLExporter(Exporter):
 
 
 class Alexandria:
-    def __init__(self):
-        pass
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.db = NeoDatabase(config.db)
+        self.statics = SnapshotStaticsFiles()
+        self.db.initial_migration()
 
+    def get_snapshot_websites(self):
+        return "hi"
 
-def run_server(port, debug, server = HTTPServer, handler = AlexandriaStaticServer):
+class AlexandriaStaticServer(SimpleHTTPRequestHandler):
+    template_name = static_file("index.html")
+    stylesheet = static_file("index.css")
+    debug = False
+    alx = None
+
+    @cached_property
+    def html_template(self):
+        with open(self.template_name, "r") as f:
+            return f.read()
+
+    def log_message(self, fmt, *args):
+        if self.debug:
+            return super().log_message(fmt, *args)
+
+    def response(self, status_code, content, content_type="text/html"):
+        self.send_response(status_code)
+        self.send_header("Content-type", content_type)
+        self.end_headers()
+        self.wfile.write(bytes(content, "utf-8"))
+
+    def index(self):
+        # exporter = HTMLExporter(self.alx.get_snapshot_websites())
+        # content = self.html_template.format(css=self.stylesheet, table=exporter.generate())
+        content = self.html_template.format(css=self.stylesheet, table=self.alx.get_snapshot_websites())
+        return self.response(HTTPStatus.OK, content)
+
+    def do_GET(self):
+        if self.path == "/":
+            return self.index()
+        return super().do_GET()
+
+def run_server(config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
-    server_addr = ("", port)
-    handler.debug = debug
+    server_addr = ("", config.server_port)
+    handler.debug = config.debug
+    handler.alx = Alexandria(config)
     httpd = server(server_addr, handler)
     try:
         httpd.serve_forever()
@@ -362,49 +434,78 @@ def download_website_static(url, mirrors_path):
 
     cmd = ["wget"]
     cmd.extend(["-P", str(mirrors_path)])
-    cmd.extend(["--mirror","-p","--recursive", "-l","1","--page-requisites","--adjust-extension","--span-hosts"])
+    cmd.extend(["--mirror", "-p", "--recursive", "-l", "1"])
+    cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
     cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
-    cmd.extend(["-e","robots=off","--random-wait","--no-cookies"])
-    cmd.extend(["--convert-links", "--restrict-file-names=windows", "--domains", str(domain)])
+    cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
+    cmd.extend(["--convert-links", "--restrict-file-names=windows"])
+    cmd.extend(["--domains", str(domain)])
     cmd.extend(["--no-parent", str(url)])
 
-    debug_print("command: {}".format(" ".join(cmd)))
+    # debug_print("command: {}".format(" ".join(cmd)))
     subprocess.run(cmd, check=False)
-    title_print(f"Finished {url}!!!")
+    # title_print(f"Finished {url}!!!")
 
 
 def generate_md_database(content, database_file):
     with open(database_file, "wb") as f:
         f.write(bytes(content, "utf-8"))
-    debug_print(f"Database {database_file} generated...")
+    # debug_print(f"Database {database_file} generated...")
 
 
 if __name__ == "__main__":
-    title_print("Alexandria - CLI website preservation")
-
-    parser = argparse.ArgumentParser(prog="Alexandria", description="A tool to manage your personal website backup libary", epilog="Keep and hold")
+    print("Alexandria - CLI website preservation")
+    parser = argparse.ArgumentParser(
+        prog="Alexandria",
+        description="A tool to manage your personal website backup libary",
+        epilog="Keep and hold",
+    )
     parser.add_argument("url", help="One or more internet links (URL)", nargs="*")
-    parser.add_argument("-p", "--port", help="The port to run server, 8000 is default", default=ConfigManager.server_port, type=int)
-    parser.add_argument("-v", "--verbose", help="Enable verbose", default=ConfigManager.debug, action=argparse.BooleanOptionalAction, type=bool)
-    parser.add_argument("-s", "--skip", help="Skip download process, only add entry.", default=False, action=argparse.BooleanOptionalAction, type=bool)
-    parser.add_argument("--readme", "--database-readme", help="Generate the database README.", default=True, action=argparse.BooleanOptionalAction, type=bool)
+    parser.add_argument(
+        "-p",
+        "--port",
+        help="The port to run server, 8000 is default",
+        default=ConfigManager.server_port,
+        type=int,
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Enable verbose",
+        default=ConfigManager.debug,
+        type=bool,
+    )
+    parser.add_argument(
+        "--skip",
+        help="Skip download process, only add entry.",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        type=bool,
+    )
+    parser.add_argument(
+        "--readme",
+        help="Generate the database README.",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        type=bool,
+    )
     args = parser.parse_args()
-    
+
     url_to_download = args.url
-    pref = ConfigManager(path="./alx", server_port = args.port, debug = args.verbose, generate_readme = args.readme, skip_download=args.skip)
+    config = ConfigManager(path="./alx", server_port=args.port, debug=args.verbose, generate_readme=args.readme, skip_download=args.skip)
 
     # server it - bye!
     if not url_to_download:
-        run_server(pref.server_port, debug=pref.debug)
+        run_server(config)
         sys.exit()
 
-    if pref.skip:
-        debug_print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own", border=True)
+    if config.skip:
+        print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own")
     else:
-        for url in url_to_download :
-            download_website_static(url, pref.db_statics)
-            webpage = WebPage(url, pref.db_statics)
-            database.add(webpage)
+        for url in url_to_download:
+            download_website_static(url, config.db_statics)
+            webpage = WebPage(url, config.db_statics)
+            # database.add(webpage)
 
-    database.save()
-    generate_md_database(database.to_md(), pref.readme)
+    # database.save()
+    # generate_md_database(database.to_md(), config.readme)
