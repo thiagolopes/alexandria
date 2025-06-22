@@ -16,9 +16,45 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from enum import Flag, auto
 
-class URL:
-    # parse url and validate http or https
+
+class SnapshotStaticNotFound(Exception):
     pass
+
+
+class InvalidURL(Exception):
+    pass
+
+
+@dataclass(init=False)
+class URL:
+    scheme: str
+    netloc: str
+    path: str
+    params: str
+    query: str
+    fragment: str
+
+    original_url: str
+
+    def __init__(self, url):
+        url_p = urlparse(url)
+        if not url_p.scheme and not url_p.netloc:
+            raise InvalidURL(f"{url} is not a valid URL")
+
+        self.original_url = url
+        self.scheme = url_p.scheme
+        self.netloc = url_p.netloc
+        self.path = url_p.path
+        self.params = url_p.params
+        self.query = url_p.query
+        self.fragment = url_p.fragment
+
+    def __hash__(self):
+        return hash(self.original_url)
+
+    def __str__(self):
+        return self.original_url
+
 
 class ProcessChoices(Flag):
     SERVE = auto()
@@ -38,7 +74,7 @@ class AlxConfig:
 
     skip_download: bool = False  # debug only
 
-    db_name: str = "database"
+    db_name: str = "database.json"
     db_statics_name: str = "mirrors"
 
     def __post_init__(self):
@@ -64,11 +100,6 @@ class AlxConfig:
     def statics_server(self) -> Path:
         return Path("./static")
 
-def static_file(name):
-    return f"./static/{name}"
-
-class SnapshotStaticNotFound(Exception):
-    pass
 
 class SnapshotStaticsFiles:
     def __init__(self, path):
@@ -86,34 +117,43 @@ class SnapshotStaticsFiles:
         for directory in self.__iter__():
             yield directory.name
 
-    def resolve_static_directory(self, url) -> Path:
-        url_p = urlparse(url)
-        path = self.base_path / Path(f"{url_p.netloc}/{url_p.path}")
-        if not path.exists():
-            raise SnapshotStaticNotFound(f"url {url} not found in statics {path}")
-        return path
+    def resolve_snapshot_index(self, url: URL) -> Path:
+        path = self.base_path / Path(f"{url.netloc}/{url.path}")
 
-    def resolve_snapshot_index(self, url) -> Path:
-        url_p = urlparse(url)
-        base_path = self.resolve_static_directory(url)
-
-        possibles_files = base_path.glob("index.html*")
+        possibles_files = [
+            path,
+            path.parent,
+            Path(str(path) + ".html"),
+            Path(str(path.parent) + ".html"),
+            path / "index.html",
+            path.parent / "index.html",
+            path / ("index.html@" + url.query + ".html"),
+            path.parent / ("index.html@" + url.query + ".html"),
+        ]
+        # if str(url) == "https://chromium.googlesource.com/chromiumos/docs/+/master/constants/syscalls.md": breakpoint()
         for f in possibles_files:
             if f.is_file():
                 return f
 
+        err = "\n".join(str(p) for p in possibles_files)
         raise SnapshotStaticNotFound(
-            "unreachable - cound not determinate the html file!\n"
-            "check there is any option available: \n"
-            "\n".join(str(p) for p in possibles_files)
+            (
+                "unreachable - cound not determinate the html file!\n"
+                f"url: {url}\n"
+                "all the patterns checked:\n"
+                f"{err}"
+                "\nplease patch me\n"
+            )
         )
 
-    def size_by_domain(self, url) -> int:
-        path = self.resolve_static_directory(url)
+    def size_domain_by_url(self, url: URL) -> int:
+        path = self.base_path / url.netloc
+        if not path.exists():
+            return 0
         return self._directory_size(path)
 
     @cache
-    def _directory_size(self, path) -> int:
+    def _directory_size(self, path: Path) -> int:
         total = 0
         for e in path.iterdir():
             if e.is_dir():
@@ -122,54 +162,86 @@ class SnapshotStaticsFiles:
                 total += e.stat().st_size
         return total
 
-ss = SnapshotStaticsFiles("./alx/mirrors")
-print(len(ss))
-print(list(ss.list_all_snapshot_domains()))
-print(ss._directory_size(ss.base_path))
-url = "https://bruop.github.io/frustum_culling/"
-print(ss.size_by_domain(url))
-print(ss.resolve_static_directory(url))
-# print(ss.size_by_domain("dsdsdfshu"))
+
+# ss = SnapshotStaticsFiles("./alx/mirrors")
+# print(len(ss))
+# print(list(ss.list_all_snapshot_domains()))
+# print(ss._directory_size(ss.base_path))
+# url = "https://bruop.github.io/frustum_culling/"
+# url = URL("https://learnopengl.com/Guest-Articles/2021/Scene/Frustum-Culling")
+# print(ss.size_domain_by_url(url))
+# print(ss.size_domain_by_url(URL("https://naoexit.com")))
+
+
+class HTMLFile:
+    # this only parses basic tags, do not use as AST analizer
+
+    re_find_title = re.compile(
+        r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL
+    )
+
+    def __init__(self, file_path: Path):
+        self.file_path = file_path
+
+    def title(self):
+        bytes_to_read = int(self.file_path.stat().st_size * 0.3)
+
+        with open(self.file_path, "r") as f:
+            html_cont = f.read(bytes_to_read)
+
+        if match := self.re_find_title.search(html_cont):
+            return html.unescape(match.groups()[0])
+        return ""
+
 
 @dataclass(eq=False)
 class SnapshotPage:
-    website_url: str
+    url: URL
     title: str = field(repr=False)
     size: int = field(repr=False)
     index_snapshot: Path = field(repr=False)
     created_at: datetime = field(default_factory=datetime.now)
 
+    def __post_init__(self):
+        self.url = URL(str(self.url))
+        if not isinstance(self.created_at, datetime):
+            self.created_at = datetime.fromisoformat(self.created_at)
+
     def __hash__(self):
-        return hash(self.website_url)
+        return hash(self.url)
 
     def __eq__(self, other):
-        return other.website_url == self.website_url
+        return other.url == self.url
 
     @classmethod
-    def from_static(cls, index_html, url, size, created_at = None):
-        re_find_title = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
-        title = "" # default should be domain if
-        with open(index_html, "r") as f:
-            html_cont = ""
-            for line in f.readlines():
-                html_cont += line
-                if match := re_find_title.search(html_cont):
-                    title = html.unescape(match.groups()[0])
-        if not title:
-            pass
-            # warning: maybe not a valid static html
+    def from_statics(
+        cls, statics: SnapshotStaticsFiles, url: str, created_at: datetime | None = None
+    ):
+        url_k = URL(url)
+        index_html = statics.resolve_snapshot_index(url_k)
+        title = HTMLFile(index_html).title()
+        size = statics.size_domain_by_url(url_k)
+
         if created_at:
-            return cls(url, title, size, index_html, created_at)
-        return cls(url, title, size, index_html)
+            return cls(
+                url_k,
+                title,
+                size,
+                index_html.relative_to(statics.base_path),
+                created_at,
+            )
+        return cls(url_k, title, size, index_html)
 
-    def asdict(self):
-        return {"url": self.website_url,"created_at": self.created_at}
+    def dump(self):
+        return {"url": self.url, "created_at": self.created_at}
 
-sp = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
-sp2 = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
-print(sp == sp2)
-print(sp)
-print(sp.asdict())
+
+# sp = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
+# sp2 = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
+# print(sp == sp2)
+# print(sp)
+# print(sp.dump())
+
 
 class NeoDatabase:
     def __init__(self, database_file: Path):
@@ -191,6 +263,7 @@ class NeoDatabase:
 
         self.database_file.touch()
         self.save()
+        self.load()
 
     def save(self):
         # print("[DATABASE] Saving mirrors-list on disk...")
@@ -216,16 +289,17 @@ class NeoDatabase:
                     return row
             elif row == query:
                 return row
-db = NeoDatabase("./alx/database.json")
-db.load()
-# db.save()
-print(len(db["websites"]))
 
-exit()
+
+# db = NeoDatabase("./alx/database.json")
+# db.load()
+# # db.save()
+# print(len(db["websites"]))
+
 
 class Exporter:
-    def __init__(self, websites):
-        self.websites = websites
+    def __init__(self, snapshots: list[SnapshotPage]):
+        self.snapshots = snapshots
 
     def clean_title(self, title):
         return title.replace("|", "-").replace("\n", "")
@@ -242,27 +316,35 @@ class Exporter:
                 break
         return f"{num:3.1f} {u}"
 
-    def trunc_url(self, url, max_trunc=45):
-        url = url.removeprefix("https://").removeprefix("http://").removeprefix("www.")
-        if len(url) > max_trunc:
-            url = url[:max_trunc] + "(...)"
-        return url
+    def trunc_url(self, url: URL, max_trunc=45):
+        url_str = (
+            str(url)
+            .removeprefix("https://")
+            .removeprefix("http://")
+            .removeprefix("www.")
+        )
+        if len(url_str) > max_trunc:
+            url = url_str[:max_trunc] + "(...)"
+        return url_str
 
     def humanize_datetime(self, dt):
         datetime_fmt = "%d. %B %Y %I:%M%p"
         return dt.strftime(datetime_fmt)
 
+    def generate(self):
+        pass
+
 
 class MarkDownExporter(Exporter):
-    def website_md_line(self, website):
-        title = self.clean_title(website.title)
-        url = self.url
-        created_at = self.humanize_datetime(self.created_at)
+    def website_md_line(self, snapshot: SnapshotPage):
+        title = self.clean_title(snapshot.title)
+        url = snapshot.url
+        created_at = self.humanize_datetime(snapshot.created_at)
         return f"| [{title}]({url}) | {created_at} |"
 
     def generate(self):
         today = self.humanize_datetime(datetime.now())
-        md_table = "\n".join(self.website_md_line(web) for web in self.websites)
+        md_table = "\n".join(self.website_md_line(web) for web in self.snapshots)
         return (
             f"# Alexandria - generated at {today}\n"
             "| Site | Created at |\n"
@@ -272,17 +354,17 @@ class MarkDownExporter(Exporter):
 
 
 class HTMLExporter(Exporter):
-    def website_detail_list(self, website):
-        title = self.clean_title(website.title)
-        url = self.trunc_url(website.url)
-        full_path = Path(website.full_path).relative_to(Path(".").absolute())
-        size = self.humanize_size(website.size)
-        created_at = self.humanize_datetime(website.created_at)
+    def website_detail_list(self, snapshot: SnapshotPage):
+        title = self.clean_title(snapshot.title)
+        url = self.trunc_url(snapshot.url)
+        index_path = snapshot.index_snapshot
+        size = self.humanize_size(snapshot.size)
+        created_at = self.humanize_datetime(snapshot.created_at)
 
         return f"""
         <tr>
             <td class="td_title">{title}</td>
-            <td><a href="{full_path}">{url}</a></td>
+            <td><a href="{index_path}">{url}</a></td>
             <td>{size}</td>
             <td>{created_at}</td>
         </tr>"""
@@ -295,22 +377,30 @@ class HTMLExporter(Exporter):
             <th>Size</th>
             <th>Created at</th>
             </tr>\n"""
-        return table + " ".join(self.website_detail_list(web) for web in self.websites)
+        return table + " ".join(self.website_detail_list(web) for web in self.snapshots)
 
 
 class Alexandria:
     def __init__(self, config: AlxConfig):
         self.config = config
         self.db = NeoDatabase(config.db)
-        self.statics = SnapshotStaticsFiles()
+        self.statics = SnapshotStaticsFiles(config.db_statics)
         self.db.initial_migration()
 
-    def genereate_html_list(self):
-        return "hi"
+    def genereate_html_snapshots_list(self):
+        self.db.load()
+        snaps = []
+        for snapshot in self.db["websites"]:
+            sp = SnapshotPage.from_statics(
+                self.statics, snapshot["url"], snapshot["created_at"]
+            )
+            snaps.append(sp)
+        return HTMLExporter(snaps[::-1]).generate()
+
 
 class AlexandriaStaticServer(SimpleHTTPRequestHandler):
-    template_name = static_file("index.html")
-    stylesheet = static_file("index.css")
+    template_name = "./static/index.html"
+    stylesheet = "./static/index.css"
     debug = False
     alx = None
 
@@ -330,9 +420,9 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         self.wfile.write(bytes(content, "utf-8"))
 
     def index(self):
-        # exporter = HTMLExporter(self.alx.get_snapshot_websites())
-        # content = self.html_template.format(css=self.stylesheet, table=exporter.generate())
-        content = self.html_template.format(css=self.stylesheet, table=self.alx.genereate_html_list())
+        content = self.html_template.format(
+            css=self.stylesheet, table=self.alx.genereate_html_snapshots_list()
+        )
         return self.response(HTTPStatus.OK, content)
 
     def do_GET(self):
@@ -340,7 +430,8 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
             return self.index()
         return super().do_GET()
 
-def run_server(config, server=HTTPServer, handler=AlexandriaStaticServer):
+
+def run_server(config: AlxConfig, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
@@ -356,14 +447,8 @@ def run_server(config, server=HTTPServer, handler=AlexandriaStaticServer):
         sys.exit()
 
 
-def download_website_static(url, mirrors_path):
-    urlp = urlparse(url)
-    if not bool(urlp.scheme):
-        # title_print(f"Not valid url - {url}")
-        sys.exit()
-
-    domain = urlp.hostname
-    # title_print(f"Making a mirror of: {url} at {domain}")
+def download_website_static(url: URL, mirrors_path):
+    domain = url.hostname
 
     cmd = ["wget"]
     cmd.extend(["-P", str(mirrors_path)])
@@ -425,7 +510,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     url_to_download = args.url
-    config = AlxConfig(path="./alx", server_port=args.port, debug=args.verbose, generate_readme=args.readme, skip_download=args.skip)
+    config = AlxConfig(
+        path="./alx",
+        server_port=args.port,
+        debug=args.verbose,
+        generate_readme=args.readme,
+        skip_download=args.skip,
+    )
 
     # server it - bye!
     if not url_to_download:
