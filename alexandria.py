@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime
-from functools import cached_property
+from functools import cached_property, partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
 from dataclasses import dataclass, field, asdict
@@ -17,7 +17,7 @@ from pathlib import Path
 from enum import Flag, auto
 
 
-class SnapshotStaticNotFound(Exception):
+class StaticNotFound(Exception):
     pass
 
 
@@ -101,12 +101,12 @@ class AlxConfig:
         return Path("./static")
 
 
-class SnapshotStaticsFiles:
+class StaticsFiles:
     def __init__(self, path):
-        self.base_path = Path(path)
+        self.path = Path(path)
 
     def __iter__(self):
-        for directory in self.base_path.iterdir():
+        for directory in self.path.iterdir():
             if directory.is_dir():
                 yield directory
 
@@ -118,7 +118,7 @@ class SnapshotStaticsFiles:
             yield directory.name
 
     def resolve_snapshot_index(self, url: URL) -> Path:
-        path = self.base_path / Path(f"{url.netloc}/{url.path}")
+        path = self.path / Path(f"{url.netloc}/{url.path}")
 
         possibles_files = [
             path,
@@ -130,13 +130,12 @@ class SnapshotStaticsFiles:
             path / ("index.html@" + url.query + ".html"),
             path.parent / ("index.html@" + url.query + ".html"),
         ]
-        # if str(url) == "https://chromium.googlesource.com/chromiumos/docs/+/master/constants/syscalls.md": breakpoint()
         for f in possibles_files:
             if f.is_file():
                 return f
 
         err = "\n".join(str(p) for p in possibles_files)
-        raise SnapshotStaticNotFound(
+        raise StaticNotFound(
             (
                 "unreachable - cound not determinate the html file!\n"
                 f"url: {url}\n"
@@ -147,7 +146,7 @@ class SnapshotStaticsFiles:
         )
 
     def size_domain_by_url(self, url: URL) -> int:
-        path = self.base_path / url.netloc
+        path = self.path / url.netloc
         if not path.exists():
             return 0
         return self._directory_size(path)
@@ -163,7 +162,7 @@ class SnapshotStaticsFiles:
         return total
 
 
-# ss = SnapshotStaticsFiles("./alx/mirrors")
+# ss = StaticsFiles("./alx/mirrors")
 # print(len(ss))
 # print(list(ss.list_all_snapshot_domains()))
 # print(ss._directory_size(ss.base_path))
@@ -191,7 +190,7 @@ class HTMLFile:
 
         if match := self.re_find_title.search(html_cont):
             return html.unescape(match.groups()[0])
-        return ""
+        return self.file_path.name
 
 
 @dataclass(eq=False)
@@ -199,7 +198,7 @@ class SnapshotPage:
     url: URL
     title: str = field(repr=False)
     size: int = field(repr=False)
-    index_snapshot: Path = field(repr=False)
+    index_file: Path = field(repr=False)
     created_at: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
@@ -215,7 +214,7 @@ class SnapshotPage:
 
     @classmethod
     def from_statics(
-        cls, statics: SnapshotStaticsFiles, url: str, created_at: datetime | None = None
+        cls, statics: StaticsFiles, url: str, created_at: datetime | None = None
     ):
         url_k = URL(url)
         index_html = statics.resolve_snapshot_index(url_k)
@@ -227,7 +226,7 @@ class SnapshotPage:
                 url_k,
                 title,
                 size,
-                index_html.relative_to(statics.base_path),
+                index_html.relative_to(statics.path),
                 created_at,
             )
         return cls(url_k, title, size, index_html)
@@ -324,7 +323,7 @@ class Exporter:
             .removeprefix("www.")
         )
         if len(url_str) > max_trunc:
-            url = url_str[:max_trunc] + "(...)"
+            url_str = url_str[:max_trunc] + "(...)"
         return url_str
 
     def humanize_datetime(self, dt):
@@ -356,15 +355,15 @@ class MarkDownExporter(Exporter):
 class HTMLExporter(Exporter):
     def website_detail_list(self, snapshot: SnapshotPage):
         title = self.clean_title(snapshot.title)
-        url = self.trunc_url(snapshot.url)
-        index_path = snapshot.index_snapshot
+        snap_url = self.trunc_url(snapshot.url)
+        url = snapshot.index_file
         size = self.humanize_size(snapshot.size)
         created_at = self.humanize_datetime(snapshot.created_at)
 
         return f"""
         <tr>
             <td class="td_title">{title}</td>
-            <td><a href="{index_path}">{url}</a></td>
+            <td><a href="{url}">{snap_url}</a></td>
             <td>{size}</td>
             <td>{created_at}</td>
         </tr>"""
@@ -384,34 +383,46 @@ class Alexandria:
     def __init__(self, config: AlxConfig):
         self.config = config
         self.db = NeoDatabase(config.db)
-        self.statics = SnapshotStaticsFiles(config.db_statics)
+        self.statics = StaticsFiles(config.db_statics)
         self.db.initial_migration()
 
-    def genereate_html_snapshots_list(self):
-        self.db.load()
+    def get_snaps(self) -> list[SnapshotPage]:
+        db_snaps = self.db["websites"]
+        assert db_snaps is not None, "missing 'websites' in database"
+
         snaps = []
-        for snapshot in self.db["websites"]:
+        for snapshot in db_snaps:
             sp = SnapshotPage.from_statics(
                 self.statics, snapshot["url"], snapshot["created_at"]
             )
             snaps.append(sp)
+        return snaps
+
+    def genereate_html_snapshots_list(self) -> str:
+        self.db.load()
+        snaps = self.get_snaps()
         return HTMLExporter(snaps[::-1]).generate()
 
 
 class AlexandriaStaticServer(SimpleHTTPRequestHandler):
-    template_name = "./static/index.html"
-    stylesheet = "./static/index.css"
+    template_name = Path("./static/index.html")
+    stylesheet = Path("./static/index.css")
     debug = False
-    alx = None
+    alx: Alexandria | None = None
 
     @cached_property
     def html_template(self):
         with open(self.template_name, "r") as f:
             return f.read()
 
-    def log_message(self, fmt, *args):
+    @cached_property
+    def css(self):
+        with open(self.stylesheet, "r") as f:
+            return f.read()
+
+    def log_message(self, format, *args):
         if self.debug:
-            return super().log_message(fmt, *args)
+            return super().log_message(format, *args)
 
     def response(self, status_code, content, content_type="text/html"):
         self.send_response(status_code)
@@ -420,9 +431,8 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         self.wfile.write(bytes(content, "utf-8"))
 
     def index(self):
-        content = self.html_template.format(
-            css=self.stylesheet, table=self.alx.genereate_html_snapshots_list()
-        )
+        assert self.alx is not None, "Missing Alexandria instance"
+        content = self.html_template.format(css=self.css, table=self.alx.genereate_html_snapshots_list())
         return self.response(HTTPStatus.OK, content)
 
     def do_GET(self):
@@ -435,10 +445,11 @@ def run_server(config: AlxConfig, server=HTTPServer, handler=AlexandriaStaticSer
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
+    alx = Alexandria(config)
     server_addr = ("", config.server_port)
     handler.debug = config.debug
-    handler.alx = Alexandria(config)
-    httpd = server(server_addr, handler)
+    handler.alx = alx
+    httpd = server(server_addr, partial(handler, directory=alx.statics.path))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
