@@ -1,6 +1,7 @@
 #! /bin/python3
 import argparse
 from http import HTTPStatus
+from functools import cache
 import html
 import os
 import json
@@ -11,10 +12,13 @@ from datetime import datetime
 from functools import cached_property
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from enum import Flag, auto
 
+class URL:
+    # parse url and validate http or https
+    pass
 
 class ProcessChoices(Flag):
     SERVE = auto()
@@ -24,7 +28,7 @@ class ProcessChoices(Flag):
 
 
 @dataclass
-class ConfigManager:
+class AlxConfig:
     path: Path
     generate_readme: bool = True
     readme_name: str = "README.md"
@@ -75,20 +79,23 @@ class SnapshotStaticsFiles:
             if directory.is_dir():
                 yield directory
 
+    def __len__(self):
+        return len(list(self.__iter__()))
+
     def list_all_snapshot_domains(self) -> list[str]:
         for directory in self.__iter__():
             yield directory.name
 
-    def resolve_url_to_static_file(self, url) -> Path:
+    def resolve_static_directory(self, url) -> Path:
         url_p = urlparse(url)
         path = self.base_path / Path(f"{url_p.netloc}/{url_p.path}")
         if not path.exists():
             raise SnapshotStaticNotFound(f"url {url} not found in statics {path}")
         return path
 
-    def resolve_entry_point(self, url) -> Path:
+    def resolve_snapshot_index(self, url) -> Path:
         url_p = urlparse(url)
-        base_path = self.resolve_url_to_static_file(url)
+        base_path = self.resolve_static_directory(url)
 
         possibles_files = base_path.glob("index.html*")
         for f in possibles_files:
@@ -101,11 +108,11 @@ class SnapshotStaticsFiles:
             "\n".join(str(p) for p in possibles_files)
         )
 
-
     def size_by_domain(self, url) -> int:
-        path = self.resolve_url_to_static_file(url)
+        path = self.resolve_static_directory(url)
         return self._directory_size(path)
 
+    @cache
     def _directory_size(self, path) -> int:
         total = 0
         for e in path.iterdir():
@@ -115,21 +122,22 @@ class SnapshotStaticsFiles:
                 total += e.stat().st_size
         return total
 
-
-
 ss = SnapshotStaticsFiles("./alx/mirrors")
+print(len(ss))
 print(list(ss.list_all_snapshot_domains()))
 print(ss._directory_size(ss.base_path))
 url = "https://bruop.github.io/frustum_culling/"
 print(ss.size_by_domain(url))
-print(ss.resolve_entry_point(url))
-print(ss.size_by_domain("dsdsdfshu"))
+print(ss.resolve_static_directory(url))
+# print(ss.size_by_domain("dsdsdfshu"))
 
+@dataclass(eq=False)
 class SnapshotPage:
     website_url: str
-    created_at: datetime
-    size: int
-    title: str
+    title: str = field(repr=False)
+    size: int = field(repr=False)
+    index_snapshot: Path = field(repr=False)
+    created_at: datetime = field(default_factory=datetime.now)
 
     def __hash__(self):
         return hash(self.website_url)
@@ -137,108 +145,31 @@ class SnapshotPage:
     def __eq__(self, other):
         return other.website_url == self.website_url
 
-    def __repr__(self):
-        return f"<SnapshotPage websit={self.url}>"
-
-    def __str__(self):
-        return self.url
-
-    def from_html_file(cls, html_file, url, created_at, size):
-        pass
-
-
-class WebPage:
-    title_re = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
-
-    def __init__(self, url, path: Path, created_at=None):
-        self.url = url
-        self.path = path
-        self.base_path, self.full_path = self.index_path()
-        self.title = self.grep_title_from_index()
-        self.size = self.calculate_size_disk(self.base_path)
-
-        if created_at is None:
-            # debug_print(f"[GENERATED] {self!r}")
-            self.created_at = datetime.now()
-        else:
-            # debug_print(f"[RELOADED] {self!r}")
-            self.created_at = created_at
-
-    def __hash__(self):
-        return hash(self.url)
-
-    def __eq__(self, other):
-        return other.url == self.url
-
-    def __repr__(self):
-        return f"<Mirror url={self.url}>"
-
-    def __str__(self):
-        return self.url
-
     @classmethod
-    def from_webpage(cls, other, path):
-        # Re-crate mirror from other mirror - migrate
-        return cls(other.url, path, other.created_at)
-
-    def index_path(self):
-        url = urlparse(self.url)
-
-        path = (
-            self.path
-            / Path(url.netloc)
-            / Path(url.path.removeprefix("/").removesuffix("/"))
-        )
-        possibles_files = [
-            Path(path),
-            Path(str(path) + ".html"),
-            Path(path) / "index.html",
-            Path(path) / ("index.html@" + url.query + ".html"),
-        ]
-        if not Path(path).is_dir():
-            possibles_files += [
-                p for p in Path(path).parent.glob("*.html") if url.query in str(p)
-            ]
-
-        for f in possibles_files:
-            if f.is_file():
-                return (self.path / url.netloc), str(f)
-        # TODO move to a exception
-        assert False, (
-            "unreachable - cound not determinate the html file!\n"
-            "check there is any option available: \n"
-        ) + "\n".join(str(p) for p in possibles_files)
-
-    def grep_title_from_index(self):
-        file_text = ""
-        with open(self.full_path, "r") as f:
+    def from_static(cls, index_html, url, size, created_at = None):
+        re_find_title = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
+        title = "" # default should be domain if
+        with open(index_html, "r") as f:
+            html_cont = ""
             for line in f.readlines():
-                file_text += line
-                f = self.title_re.search(file_text)
-                if f:
-                    return html.unescape(f.groups()[0])
-        # TODO move to a exception
-        assert False, (
-            f"unreachable - do not found <title> in the html\n"
-            f"-> {self.url} NEED be a staticpage!"
-        )
+                html_cont += line
+                if match := re_find_title.search(html_cont):
+                    title = html.unescape(match.groups()[0])
+        if not title:
+            pass
+            # warning: maybe not a valid static html
+        if created_at:
+            return cls(url, title, size, index_html, created_at)
+        return cls(url, title, size, index_html)
 
-    def calculate_size_disk(self, path):
-        total = 0
-        with os.scandir(path) as f:
-            for e in f:
-                if e.is_dir():
-                    total += self.calculate_size_disk(e.path)
-                if e.is_file():
-                    total += e.stat().st_size
-        return total
+    def asdict(self):
+        return {"url": self.website_url,"created_at": self.created_at}
 
-    def to_out(self):
-        return {
-            "url": self.url,
-            "created_at": self.created_at.isoformat(),
-        }
-
+sp = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
+sp2 = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
+print(sp == sp2)
+print(sp)
+print(sp.asdict())
 
 class NeoDatabase:
     def __init__(self, database_file: Path):
@@ -287,7 +218,9 @@ class NeoDatabase:
                 return row
 db = NeoDatabase("./alx/database.json")
 db.load()
-db.save()
+# db.save()
+print(len(db["websites"]))
+
 exit()
 
 class Exporter:
@@ -366,13 +299,13 @@ class HTMLExporter(Exporter):
 
 
 class Alexandria:
-    def __init__(self, config: ConfigManager):
+    def __init__(self, config: AlxConfig):
         self.config = config
         self.db = NeoDatabase(config.db)
         self.statics = SnapshotStaticsFiles()
         self.db.initial_migration()
 
-    def get_snapshot_websites(self):
+    def genereate_html_list(self):
         return "hi"
 
 class AlexandriaStaticServer(SimpleHTTPRequestHandler):
@@ -399,7 +332,7 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
     def index(self):
         # exporter = HTMLExporter(self.alx.get_snapshot_websites())
         # content = self.html_template.format(css=self.stylesheet, table=exporter.generate())
-        content = self.html_template.format(css=self.stylesheet, table=self.alx.get_snapshot_websites())
+        content = self.html_template.format(css=self.stylesheet, table=self.alx.genereate_html_list())
         return self.response(HTTPStatus.OK, content)
 
     def do_GET(self):
@@ -465,14 +398,14 @@ if __name__ == "__main__":
         "-p",
         "--port",
         help="The port to run server, 8000 is default",
-        default=ConfigManager.server_port,
+        default=AlxConfig.server_port,
         type=int,
     )
     parser.add_argument(
         "-v",
         "--verbose",
         help="Enable verbose",
-        default=ConfigManager.debug,
+        default=AlxConfig.debug,
         type=bool,
     )
     parser.add_argument(
@@ -492,7 +425,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     url_to_download = args.url
-    config = ConfigManager(path="./alx", server_port=args.port, debug=args.verbose, generate_readme=args.readme, skip_download=args.skip)
+    config = AlxConfig(path="./alx", server_port=args.port, debug=args.verbose, generate_readme=args.readme, skip_download=args.skip)
 
     # server it - bye!
     if not url_to_download:
