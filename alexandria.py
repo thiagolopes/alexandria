@@ -122,17 +122,15 @@ class StaticsFiles:
 
         possibles_files = [
             path,
-            path.parent,
-            Path(str(path) + ".html"),
-            Path(str(path.parent) + ".html"),
             path / "index.html",
-            path.parent / "index.html",
-            path / ("index.html@" + url.query + ".html"),
-            path.parent / ("index.html@" + url.query + ".html"),
+            str(path) + ".html",
+            str(path) + ("index.html@" + url.query + ".html"),
+            str(path) + ("@" + url.query + ".html"),
         ]
         for f in possibles_files:
-            if f.is_file():
-                return f
+            fp = Path(f)
+            if fp.is_file():
+                return fp
 
         err = "\n".join(str(p) for p in possibles_files)
         raise StaticNotFound(
