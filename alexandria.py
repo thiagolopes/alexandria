@@ -56,22 +56,24 @@ class URL:
         return self.original_url
 
 
-class ProcessChoices(Flag):
+class CLIActionChoices(Flag):
     SERVE = auto()
-    SNAPSHOT_WEBSITE = auto()
-    GENERATE_MARKDOWN = auto()
-    GENERATE_THUMBNAIL = auto()
+    SNAPSHOT_SITE = auto()
+    GENERATE_README = auto()
+    GENERATE_THUMBNAILS = auto()
 
 
 @dataclass
-class AlxConfig:
+class Config:
     path: Path
-    generate_readme: bool = True
-    readme_name: str = "README.md"
 
-    debug: bool = False
-    server_port: int = 8000
+    generate_readme: bool
+    readme_name: str
 
+    debug: bool
+    server_port: int
+
+    urls_to_download: list[Path] = field(default_factory=list)
     skip_download: bool = False  # debug only
 
     db_name: str = "database.json"
@@ -79,6 +81,8 @@ class AlxConfig:
 
     def __post_init__(self):
         self.path = Path(self.path)
+        for i, url in enumerate(self.urls_to_download):
+            self.urls_to_download[i] = URL(url)
 
     @property
     def skip(self):
@@ -96,9 +100,29 @@ class AlxConfig:
     def readme(self) -> Path:
         return (self.path / self.readme_name).absolute()
 
-    @property
-    def statics_server(self) -> Path:
-        return Path("./static")
+    @classmethod
+    def from_args_parse(cls, args_parse):
+        return cls(
+            path=args_parse.directory,
+            urls_to_download=args_parse.url,
+            generate_readme=args_parse.readme,
+            readme_name=args.readme_file_name,
+            server_port=args.port,
+            debug=args.verbose,
+            skip_download=args.skip,
+        )
+
+    def get_choice(self) -> CLIActionChoices:
+        if not self.urls_to_download:
+            return CLIActionChoices.SERVE
+
+        if self.generate_readme:
+            return CLIActionChoices.GENERATE_README
+
+        choice = CLIActionChoices.SNAPSHOT_SITE
+        # choice = choice | GENERATE_MARKDOWN
+        # choice = choice | GENERATE_THUMBNAIL
+        return choice
 
 
 class StaticsFiles:
@@ -160,18 +184,9 @@ class StaticsFiles:
         return total
 
 
-# ss = StaticsFiles("./alx/mirrors")
-# print(len(ss))
-# print(list(ss.list_all_snapshot_domains()))
-# print(ss._directory_size(ss.base_path))
-# url = "https://bruop.github.io/frustum_culling/"
-# url = URL("https://learnopengl.com/Guest-Articles/2021/Scene/Frustum-Culling")
-# print(ss.size_domain_by_url(url))
-# print(ss.size_domain_by_url(URL("https://naoexit.com")))
-
-
 class HTMLFile:
     # this only parses basic tags, do not use as AST analizer
+    # using HTMLParser from html.parser shows slower, maybe later.
 
     re_find_title = re.compile(
         r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL
@@ -181,7 +196,7 @@ class HTMLFile:
         self.file_path = file_path
 
     def title(self):
-        bytes_to_read = int(self.file_path.stat().st_size * 0.3)
+        bytes_to_read = int(self.file_path.stat().st_size * 0.5)  # 50% arbitrary number
 
         with open(self.file_path, "r") as f:
             html_cont = f.read(bytes_to_read)
@@ -233,13 +248,6 @@ class SnapshotPage:
         return {"url": self.url, "created_at": self.created_at}
 
 
-# sp = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
-# sp2 = SnapshotPage.from_static(ss.resolve_snapshot_index(url), url, ss.size_by_domain(url))
-# print(sp == sp2)
-# print(sp)
-# print(sp.dump())
-
-
 class NeoDatabase:
     def __init__(self, database_file: Path):
         self.database_file = database_file
@@ -288,12 +296,6 @@ class NeoDatabase:
                 return row
 
 
-# db = NeoDatabase("./alx/database.json")
-# db.load()
-# # db.save()
-# print(len(db["websites"]))
-
-
 class Exporter:
     def __init__(self, snapshots: list[SnapshotPage]):
         self.snapshots = snapshots
@@ -332,7 +334,7 @@ class Exporter:
         pass
 
 
-class MarkDownExporter(Exporter):
+class MDExporter(Exporter):
     def website_md_line(self, snapshot: SnapshotPage):
         title = self.clean_title(snapshot.title)
         url = snapshot.url
@@ -378,7 +380,7 @@ class HTMLExporter(Exporter):
 
 
 class Alexandria:
-    def __init__(self, config: AlxConfig):
+    def __init__(self, config: Config):
         self.config = config
         self.db = NeoDatabase(config.db)
         self.statics = StaticsFiles(config.db_statics)
@@ -393,6 +395,10 @@ class Alexandria:
             sp = SnapshotPage.from_statics(
                 self.statics, snapshot["url"], snapshot["created_at"]
             )
+            if sp.url == "https://clintbellanger.net/articles/isometric_intro/":
+                breakpoint()
+            if sp.title == "articles.html":
+                breakpoint()
             snaps.append(sp)
         return snaps
 
@@ -400,6 +406,11 @@ class Alexandria:
         self.db.load()
         snaps = self.get_snaps()
         return HTMLExporter(snaps[::-1]).generate()
+
+    def generate_readme_snapshots_list(self) -> str:
+        self.db.load()
+        snaps = self.get_snaps()
+        return MDExporter(snaps[::-1]).generate()
 
 
 class AlexandriaStaticServer(SimpleHTTPRequestHandler):
@@ -430,7 +441,8 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
 
     def index(self):
         assert self.alx is not None, "Missing Alexandria instance"
-        content = self.html_template.format(css=self.css, table=self.alx.genereate_html_snapshots_list())
+        table_content = self.alx.genereate_html_snapshots_list()
+        content = self.html_template.format(css=self.css, table=table_content)
         return self.response(HTTPStatus.OK, content)
 
     def do_GET(self):
@@ -439,7 +451,7 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
-def run_server(config: AlxConfig, server=HTTPServer, handler=AlexandriaStaticServer):
+def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
@@ -456,12 +468,19 @@ def run_server(config: AlxConfig, server=HTTPServer, handler=AlexandriaStaticSer
         sys.exit()
 
 
-def download_website_static(url: URL, mirrors_path):
-    domain = url.hostname
+def snapshot_static_site(config: Config):
+    print(config.urls_to_download)
+    deep = 1
+    url = config.urls_to_download[0]
+    destination = config.db_statics
+    domain = url.netloc
+    print(domain, destination, url)
+    exit()
 
     cmd = ["wget"]
-    cmd.extend(["-P", str(mirrors_path)])
-    cmd.extend(["--mirror", "-p", "--recursive", "-l", "1"])
+    cmd.extend(["-P", str(destination)])
+    cmd.extend(["--mirror", "-p", "--recursive"])
+    cmd.extend(["-l", deep])
     cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
     cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
     cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
@@ -474,10 +493,11 @@ def download_website_static(url: URL, mirrors_path):
     # title_print(f"Finished {url}!!!")
 
 
-def generate_md_database(content, database_file):
-    with open(database_file, "wb") as f:
-        f.write(bytes(content, "utf-8"))
-    # debug_print(f"Database {database_file} generated...")
+def generate_readme(config):
+    alx = Alexandria(config)
+    content = alx.generate_readme_snapshots_list()
+    with open(config.readme, "w") as f:
+        f.write(content)
 
 
 if __name__ == "__main__":
@@ -492,14 +512,14 @@ if __name__ == "__main__":
         "-p",
         "--port",
         help="The port to run server, 8000 is default",
-        default=AlxConfig.server_port,
+        default=8000,
         type=int,
     )
     parser.add_argument(
         "-v",
         "--verbose",
         help="Enable verbose",
-        default=AlxConfig.debug,
+        default=False,
         type=bool,
     )
     parser.add_argument(
@@ -513,32 +533,37 @@ if __name__ == "__main__":
         "--readme",
         help="Generate the database README.",
         default=True,
-        action=argparse.BooleanOptionalAction,
         type=bool,
     )
-    args = parser.parse_args()
-
-    url_to_download = args.url
-    config = AlxConfig(
-        path="./alx",
-        server_port=args.port,
-        debug=args.verbose,
-        generate_readme=args.readme,
-        skip_download=args.skip,
+    parser.add_argument(
+        "--readme-file-name",
+        help="Name to use in README generation.",
+        default="README.md",
+        type=str,
     )
+    parser.add_argument(
+        "--directory",
+        help="Path to store database and statics to serve.",
+        default="alx",
+        type=Path,
+    )
+    args = parser.parse_args()
+    config = Config.from_args_parse(args)
+    generate_readme(config)
+    exit()
+    match config.get_choice():
+        case CLIActionChoices.GENERATE_README:
+            generate_readme(config)
+        case CLIActionChoices.SERVE:
+            run_server(config)
+        case CLIActionChoices.SNAPSHOT_SITE:
+            snapshot_static_site(config)
 
-    # server it - bye!
-    if not url_to_download:
-        run_server(config)
-        sys.exit()
-
-    if config.skip:
-        print("BYPASSING THE PROCESS OF DOWNLOAD - you are on your own")
-    else:
-        for url in url_to_download:
-            download_website_static(url, config.db_statics)
-            webpage = WebPage(url, config.db_statics)
-            # database.add(webpage)
+    # else:
+    # for url in url_to_download:
+    # download_website_static(url, config.db_statics)
+    # webpage = WebPage(url, config.db_statics)
+    # database.add(webpage)
 
     # database.save()
     # generate_md_database(database.to_md(), config.readme)
