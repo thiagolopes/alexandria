@@ -73,6 +73,7 @@ h1 {
   font-style: italic;
   letter-spacing: 0.25vw;
   color: rgb(35, 63, 51);
+  margin: 2vh 0;
 }
 h2 {
   text-align: right;
@@ -133,4 +134,7 @@ path {
   text-align: left;
   color: rgb(35, 63, 51);
   background: rgb(139, 228, 189);
+}
+span {
+    font-style: normal;
 }
