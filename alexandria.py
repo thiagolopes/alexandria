@@ -38,8 +38,12 @@ class URL:
 
     def __init__(self, url):
         url_p = urlparse(url)
+
         if not url_p.scheme and not url_p.netloc:
             raise InvalidURL(f"{url} is not a valid URL")
+
+        if url_p.scheme not in ["", "https", "http"]:
+            raise InvalidURL(f"{url} is not HTTP or HTTPS")
 
         self.original_url = url
         self.scheme = url_p.scheme
@@ -48,6 +52,9 @@ class URL:
         self.params = url_p.params
         self.query = url_p.query
         self.fragment = url_p.fragment
+
+    def __eq__(self, other):
+        return self.original_url == other.original_url
 
     def __hash__(self):
         return hash(self.original_url)
@@ -67,63 +74,61 @@ class CLIActionChoices(Flag):
 class Config:
     path: Path
 
-    generate_readme: bool
-    readme_name: str
+
+    _generate_readme: bool
+    _readme_name: str
 
     debug: bool
     server_port: int
 
-    urls_to_download: list[Path] = field(default_factory=list)
-    skip_download: bool = False  # debug only
+    urls_to_snap: list[Path] = field(default_factory=list)
+    _skip_download: bool = False  # debug only
 
-    db_name: str = "database.json"
-    db_statics_name: str = "mirrors"
+    _db_name: str = "database.json"
+    _db_statics_name: str = "mirrors"
 
     def __post_init__(self):
         self.path = Path(self.path)
-        for i, url in enumerate(self.urls_to_download):
-            self.urls_to_download[i] = URL(url)
+        for i, url in enumerate(self.urls_to_snap):
+            self.urls_to_snap[i] = URL(url)
 
     @property
     def skip(self):
-        return self.debug and self.skip_download
+        return self.debug and self._skip_download
 
     @property
     def db(self) -> Path:
-        return (self.path / self.db_name).absolute()
+        return (self.path / self._db_name).absolute()
 
     @property
     def db_statics(self) -> Path:
-        return (self.path / self.db_statics_name).absolute()
+        return (self.path / self._db_statics_name).absolute()
 
     @property
     def readme(self) -> Path:
-        return (self.path / self.readme_name).absolute()
+        return (self.path / self._readme_name).absolute()
 
     @classmethod
-    def from_args_parse(cls, args_parse):
+    def from_args_parse(cls, parser):
+        args = parser.parse_args()
         return cls(
-            path=args_parse.directory,
-            urls_to_download=args_parse.url,
-            generate_readme=args_parse.readme,
-            readme_name=args.readme_file_name,
+            path=args.directory,
+            urls_to_snap=args.url,
+            _generate_readme=args.readme,
+            _readme_name=args.readme_file_name,
             server_port=args.port,
             debug=args.verbose,
-            skip_download=args.skip,
+            _skip_download=args.skip,
         )
 
     def get_choice(self) -> CLIActionChoices:
-        if not self.urls_to_download:
-            return CLIActionChoices.SERVE
+        if self.urls_to_snap:
+            return CLIActionChoices.SNAPSHOT_SITE
 
-        if self.generate_readme:
+        if self._generate_readme is True:
             return CLIActionChoices.GENERATE_README
 
-        choice = CLIActionChoices.SNAPSHOT_SITE
-        # choice = choice | GENERATE_MARKDOWN
-        # choice = choice | GENERATE_THUMBNAIL
-        return choice
-
+        return CLIActionChoices.SERVE
 
 class StaticsFiles:
     def __init__(self, path):
@@ -201,17 +206,13 @@ class HTMLFile:
         with open(self.file_path, "r") as f:
             html_cont = f.read(bytes_to_read)
 
-        if match := self.re_find_title.search(html_cont):
-            return html.unescape(match.groups()[0])
+        if re_match := self.re_find_title.search(html_cont):
+            return html.unescape(re_match.groups()[0])
         return self.file_path.name
 
-
-@dataclass(eq=False)
-class SnapshotPage:
+@dataclass(kw_only=True)
+class Snapshot:
     url: URL
-    title: str = field(repr=False)
-    size: int = field(repr=False)
-    index_file: Path = field(repr=False)
     created_at: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
@@ -225,28 +226,28 @@ class SnapshotPage:
     def __eq__(self, other):
         return other.url == self.url
 
+@dataclass(kw_only=True)
+class SnapshotStatic(Snapshot):
+    title: str = field(repr=False)
+    size: int = field(repr=False)
+    index_file: Path = field(repr=False)
+
     @classmethod
     def from_statics(
-        cls, statics: StaticsFiles, url: str, created_at: datetime | None = None
+        cls, statics: StaticsFiles, url: str, created_at: datetime
     ):
         url_k = URL(url)
         index_html = statics.resolve_snapshot_index(url_k)
         title = HTMLFile(index_html).title()
         size = statics.size_domain_by_url(url_k)
 
-        if created_at:
-            return cls(
-                url_k,
-                title,
-                size,
-                index_html.relative_to(statics.path),
-                created_at,
-            )
-        return cls(url_k, title, size, index_html)
-
-    def dump(self):
-        return {"url": self.url, "created_at": self.created_at}
-
+        return cls(
+            url=url_k,
+            created_at=created_at,
+            title=title,
+            size=size,
+            index_file=index_html.relative_to(statics.path),
+        )
 
 class NeoDatabase:
     def __init__(self, database_file: Path):
@@ -297,7 +298,7 @@ class NeoDatabase:
 
 
 class Exporter:
-    def __init__(self, snapshots: list[SnapshotPage]):
+    def __init__(self, snapshots: list[SnapshotStatic]):
         self.snapshots = snapshots
 
     def clean_title(self, title):
@@ -335,7 +336,7 @@ class Exporter:
 
 
 class MDExporter(Exporter):
-    def website_md_line(self, snapshot: SnapshotPage):
+    def website_md_line(self, snapshot: SnapshotStatic):
         title = self.clean_title(snapshot.title)
         url = snapshot.url
         created_at = self.humanize_datetime(snapshot.created_at)
@@ -353,7 +354,7 @@ class MDExporter(Exporter):
 
 
 class HTMLExporter(Exporter):
-    def website_detail_list(self, snapshot: SnapshotPage):
+    def website_detail_list(self, snapshot: SnapshotStatic):
         title = self.clean_title(snapshot.title)
         snap_url = self.trunc_url(snapshot.url)
         url = snapshot.index_file
@@ -385,31 +386,43 @@ class Alexandria:
         self.db = NeoDatabase(config.db)
         self.statics = StaticsFiles(config.db_statics)
         self.db.initial_migration()
+        self.snapshot_column_name = "websites"
 
-    def get_snaps(self) -> list[SnapshotPage]:
-        db_snaps = self.db["websites"]
+    def validate_db(self):
+        db_snaps = self.db[self.snapshot_column_name]
         assert db_snaps is not None, "missing 'websites' in database"
 
+    def insert_snapshot(self, url: URL):
+        self.validate_db()
+        sp = Snapshot(url=url)
+        self.db.insert_one(self.snapshot_column_name, asdict(sp))
+
+    def get_snapshots_static(self) -> list[SnapshotStatic]:
+        self.validate_db()
         snaps = []
         for snapshot in db_snaps:
-            sp = SnapshotPage.from_statics(
+            sp = Snapshot(snapshot["url"], snapshot["created_at"])
+            snaps.append(sp)
+        return snaps
+
+    def get_snapshots_static(self) -> list[SnapshotStatic]:
+        self.validate_db()
+        snaps = []
+        for snapshot in self.db[self.snapshot_column_name]:
+            sp = SnapshotStatic.from_statics(
                 self.statics, snapshot["url"], snapshot["created_at"]
             )
-            if sp.url == "https://clintbellanger.net/articles/isometric_intro/":
-                breakpoint()
-            if sp.title == "articles.html":
-                breakpoint()
             snaps.append(sp)
         return snaps
 
     def genereate_html_snapshots_list(self) -> str:
         self.db.load()
-        snaps = self.get_snaps()
+        snaps = self.get_snapshots_static()
         return HTMLExporter(snaps[::-1]).generate()
 
     def generate_readme_snapshots_list(self) -> str:
         self.db.load()
-        snaps = self.get_snaps()
+        snaps = self.get_snapshots_static()
         return MDExporter(snaps[::-1]).generate()
 
 
@@ -451,6 +464,27 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
+class WGet:
+    def __init__(self, path: Path, deep=1):
+        self.cmd = "wget"
+        self.deep = deep
+        self.path = path
+
+    def fetch_site(self, url: URL):
+        cmd = [self.cmd]
+        cmd.extend(["-P", str(self.path)])
+        cmd.extend(["--mirror", "-p", "--recursive"])
+        cmd.extend(["-l", self.deep])
+        cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
+        cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
+        cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
+        cmd.extend(["--convert-links", "--restrict-file-names=windows"])
+        cmd.extend(["--domains", url.netloc])
+        cmd.extend(["--no-parent", str(url)])
+
+        subprocess.run(cmd, check=False)
+
+
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
@@ -469,28 +503,14 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
 
 
 def snapshot_static_site(config: Config):
-    print(config.urls_to_download)
-    deep = 1
-    url = config.urls_to_download[0]
-    destination = config.db_statics
-    domain = url.netloc
-    print(domain, destination, url)
-    exit()
+    wget = WGet(config.db_statics)
+    urls = config.urls_to_snap
+    alx = Alexandria(config)
 
-    cmd = ["wget"]
-    cmd.extend(["-P", str(destination)])
-    cmd.extend(["--mirror", "-p", "--recursive"])
-    cmd.extend(["-l", deep])
-    cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
-    cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
-    cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
-    cmd.extend(["--convert-links", "--restrict-file-names=windows"])
-    cmd.extend(["--domains", str(domain)])
-    cmd.extend(["--no-parent", str(url)])
+    for url in urls:
+        wget.fetch_site(url)
+        alx.insert_snapshot(url)
 
-    # debug_print("command: {}".format(" ".join(cmd)))
-    subprocess.run(cmd, check=False)
-    # title_print(f"Finished {url}!!!")
 
 
 def generate_readme(config):
@@ -532,7 +552,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--readme",
         help="Generate the database README.",
-        default=True,
+        default=False,
         type=bool,
     )
     parser.add_argument(
@@ -547,18 +567,17 @@ if __name__ == "__main__":
         default="alx",
         type=Path,
     )
-    args = parser.parse_args()
-    config = Config.from_args_parse(args)
-    generate_readme(config)
-    exit()
+    config = Config.from_args_parse(parser)
+
     match config.get_choice():
+        case CLIActionChoices.SNAPSHOT_SITE:
+            snapshot_static_site(config)
         case CLIActionChoices.GENERATE_README:
             generate_readme(config)
         case CLIActionChoices.SERVE:
             run_server(config)
-        case CLIActionChoices.SNAPSHOT_SITE:
-            snapshot_static_site(config)
 
+    print("Αντίο")
     # else:
     # for url in url_to_download:
     # download_website_static(url, config.db_statics)
