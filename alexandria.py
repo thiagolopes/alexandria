@@ -583,7 +583,7 @@ def generate_readme(config):
 
 
 def main():
-    print("Αλεξάνδρεια/Alexandria/الإسكندرية - CLI website preservation")
+    print("Αλεξάνδρεια/Alexandria/الإسكندرية - Internet preservation")
     parser = argparse.ArgumentParser(
         prog="Alexandria",
         description="A tool to manage your personal website backup libary",
