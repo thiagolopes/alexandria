@@ -1,20 +1,17 @@
 #! /bin/python3
 import argparse
-from http import HTTPStatus
-from functools import cache
-import html
-import os
 import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
-from functools import cached_property, partial
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from enum import Flag, auto
+from functools import cache, cached_property, partial
+from http import HTTPStatus
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse
 
 
 class StaticNotFound(Exception):

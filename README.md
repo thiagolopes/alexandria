@@ -25,7 +25,7 @@ And the new site will be available in database and server instance.
 
 ## Requirements
 - `wget`
-- `python >= 3.9`
+- `python >= 3.10`
 
 ## About
 This project aim to be one file only and minimal deps as possible
