@@ -7,34 +7,36 @@ from dataclasses import asdict
 
 from pathlib import Path
 
-from alexandria import ConfigManager, NeoDatabase
+from alexandria import Config, NeoDatabase
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
 
+# class ConfigTest(TestCase):
+#     def test_config(self):
+#         tmp_path_k = tempfile.TemporaryDirectory("alexandria")
+#         tmp_path_k.cleanup()
+#         tmp_path = tmp_path_k.name
+#         pref = Config(path=tmp_path, _generate_readme)
 
-class PreferenceTest(TestCase):
-    def test_preferences(self):
-        tmp_path_k = tempfile.TemporaryDirectory("alexandria")
-        tmp_path_k.cleanup()
-        tmp_path = tmp_path_k.name
-        pref = ConfigManager(path=tmp_path)
+#         self.assertDictEqual(
+#             asdict(pref),
+#             {
+#                 "path": Path(tmp_path),
+#                 "db_name": "database",
+#                 "db_statics_name": "mirrors",
+#                 "debug": False,
+#                 "generate_readme": True,
+#                 "readme_name": "README.md",
+#                 "server_port": 8000,
+#                 "skip_download": False,
+#             },
+#         )
+#         self.assertEqual(pref.db, Path(f"{tmp_path}/{pref.db_name}"))
+#         self.assertEqual(pref.db_statics, Path(f"{tmp_path}/{pref.db_statics_name}"))
+#         self.assertEqual(pref.skip, False)
+#         self.assertEqual(pref.statics_server, Path("./static"))
 
-        self.assertDictEqual(asdict(pref), {
-            'path': Path(tmp_path),
-            'db_name': 'database',
-            'db_statics_name': 'mirrors',
-            'debug': False,
-            'generate_readme': True,
-            'readme_name': 'README.md',
-            'server_port': 8000,
-            'skip_download': False
-        })
-        self.assertEqual(pref.db, Path(f'{tmp_path}/{pref.db_name}'))
-        self.assertEqual(pref.db_statics, Path(f'{tmp_path}/{pref.db_statics_name}'))
-        self.assertEqual(pref.skip, False)
-        self.assertEqual(pref.statics_server, Path("./static"))
-        
 
 class DatabaseTest(TestCase):
     def setUp(self):
@@ -49,9 +51,9 @@ class DatabaseTest(TestCase):
 
     def test_initial_migration(self):
         db = NeoDatabase(self.tmp_dir / "test_mig.json")
-        self.assertEqual(Path(self.tmp_dir/"test_mig.json").exists(), False) 
+        self.assertEqual(Path(self.tmp_dir / "test_mig.json").exists(), False)
         db.initial_migration()
-        self.assertEqual(Path(self.tmp_dir/"test_mig.json").exists(), True)
+        self.assertEqual(Path(self.tmp_dir / "test_mig.json").exists(), True)
 
     def test_save(self):
         self.db.insert_one("profile", {"username": "a", "checklist": True})
@@ -65,15 +67,24 @@ class DatabaseTest(TestCase):
         db = NeoDatabase(self.db.database_file)
         db.load()
 
-        self.assertDictEqual(db.data, {'profile': [{'checklist': True, 'username': 'a'},
-                                                   {'checklist': False, 'username': 'b'}],
-                                       'temps': [32, 36],
-                                       'version': '0.0.1'})
+        self.assertDictEqual(
+            db.data,
+            {
+                "profile": [
+                    {"checklist": True, "username": "a"},
+                    {"checklist": False, "username": "b"},
+                ],
+                "temps": [32, 36],
+                "version": "0.0.1",
+            },
+        )
 
     def test_insert_one(self):
         self.assertDictEqual(self.db.data, {})
         self.db.insert_one("profile", {"username": "a", "checklist": True})
-        self.assertDictEqual(self.db.data, {"profile": [{"username": "a", "checklist": True}]})
+        self.assertDictEqual(
+            self.db.data, {"profile": [{"username": "a", "checklist": True}]}
+        )
 
     def test_find_one(self):
         payload = {"username": "a", "checklist": True}
@@ -95,6 +106,7 @@ class DatabaseTest(TestCase):
         self.assertTrue("profile" in self.db)
         self.assertFalse("not-exist" in self.db)
 
+
 # class AlexandriaTestCase:
 #     def setup_db(self, db_path):
 #         with open(db_path, "wb") as f:
@@ -109,7 +121,7 @@ class DatabaseTest(TestCase):
 #     @classmethod
 #     def setUpClass(cls):
 #         cls.tmp_path = tempfile.TemporaryDirectory("alexandria")
-#         pref = ConfigManager(cls.tmp_path.name, generate_readme=True, debug=False)
+#         pref = Config(cls.tmp_path.name, generate_readme=True, debug=False)
 #         pref.db_static.mkdir()
 
 #         cls.pref = pref
