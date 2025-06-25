@@ -1,4 +1,4 @@
-#! /bin/python3
+from hashlib import md5
 import argparse
 import html
 import json
@@ -60,6 +60,9 @@ class URL:
     def __str__(self):
         return self.original_url
 
+    def unique(self):
+        return md5(str(self.original_url).encode("utf-8")).hexdigest()
+
 
 class CLIActionChoices(Flag):
     SERVE = auto()
@@ -104,6 +107,10 @@ class Config:
         return (self.path / self._db_statics_name).absolute()
 
     @property
+    def screenshots_path(self) -> Path:
+        return (self.path / "screenshots").absolute()
+
+    @property
     def readme(self) -> Path:
         return (self.path / self._readme_name).absolute()
 
@@ -131,11 +138,13 @@ class Config:
 
 
 class StaticsFiles:
-    def __init__(self, path):
+    def __init__(self, path, relative=None):
         self.path = Path(path)
+        self.relative = Path(relative).absolute()
         self.initial_migration()
 
     def __iter__(self):
+        # fix to iter over files too...
         for directory in self.path.iterdir():
             if directory.is_dir():
                 yield directory
@@ -146,48 +155,17 @@ class StaticsFiles:
     def initial_migration(self):
         self.path.mkdir(exist_ok=True, parents=True)
 
-    def list_all_snapshot_domains(self) -> list[str]:
-        for directory in self.__iter__():
-            yield directory.name
-
-    def resolve_snapshot_index(self, url: URL) -> Path:
-        path = self.path / Path(f"{url.netloc}/{url.path}")
-
-        possibles_files = [
-            path,
-            path / "index.html",
-            str(path) + ".html",
-            str(path) + ("index.html@" + url.query + ".html"),
-            str(path) + ("@" + url.query + ".html"),
-        ]
-        for f in possibles_files:
-            fp = Path(f)
-            if fp.is_file():
-                return fp
-
-        err = "\n".join(str(p) for p in possibles_files)
-        raise StaticNotFound(
-            (
-                "unreachable - cound not determinate the html file!\n"
-                f"url: {url}\n"
-                "all the patterns checked:\n"
-                f"{err}"
-                "\nplease patch me\n"
-            )
-        )
-
-    def size_domain_by_url(self, url: URL) -> int:
-        path = self.path / url.netloc
-        if not path.exists():
-            return 0
-        return self._directory_size(path)
+    def relative_resolve(self):
+        if not self.relative:
+            return None
+        return self.path.relative_to(self.relative)
 
     @cache
-    def _directory_size(self, path: Path) -> int:
+    def directory_size(self, path: Path) -> int:
         total = 0
         for e in path.iterdir():
             if e.is_dir():
-                total += self._directory_size(e)
+                total += self.directory_size(e)
             if e.is_file():
                 total += e.stat().st_size
         return total
@@ -236,28 +214,73 @@ class Snapshot:
     def json(self):
         return {"url": str(self.url), "created_at": self.created_at.isoformat()}
 
+    def screenshot_file(self):
+        return self.url.unique() + ".png"
 
-# convert to Snapshot contains a list with StaticSnapshots.
+
 @dataclass(kw_only=True)
-class SnapshotStatic(Snapshot):
+class StaticSnapshot(Snapshot):
     title: str = field(repr=False)
     size: int = field(repr=False)
     index_file: Path = field(repr=False)
+    screenshot: Path = field(repr=False)
 
     @classmethod
-    def from_statics(cls, statics: StaticsFiles, url: str, created_at: datetime):
+    def from_statics(
+        cls,
+        ss_statics: StaticsFiles,
+        statics: StaticsFiles,
+        url: str,
+        created_at: datetime,
+    ):
         url_k = URL(str(url))
-        index_html = statics.resolve_snapshot_index(url_k)
+        size = cls.size_domain_by_url(statics, url_k)
+        index_html = cls.resolve_snapshot_index(statics, url_k)
+        screenshot = f"{url_k.unique()}.png"
         title = HTMLFile(index_html).title()
-        size = statics.size_domain_by_url(url_k)
 
         return cls(
             url=url_k,
             created_at=created_at,
             title=title,
             size=size,
-            index_file=index_html.relative_to(statics.path),
+            index_file=index_html.relative_to(statics.relative),
+            screenshot=ss_statics.relative_resolve() / screenshot,
         )
+
+    @staticmethod
+    def resolve_snapshot_index(statics: StaticsFiles, url: URL) -> Path:
+        path = statics.path / Path(f"{url.netloc}/{url.path}")
+
+        possibles_files = [
+            path,
+            path / "index.html",
+            str(path) + ".html",
+            str(path) + ("index.html@" + url.query + ".html"),
+            str(path) + ("@" + url.query + ".html"),
+        ]
+        for f in possibles_files:
+            fp = Path(f)
+            if fp.is_file():
+                return fp
+
+        err = "\n".join(str(p) for p in possibles_files)
+        raise StaticNotFound(
+            (
+                "unreachable - cound not determinate the html file!\n"
+                f"url: {url}\n"
+                "all the patterns checked:\n"
+                f"{err}"
+                "\nplease patch me\n"
+            )
+        )
+
+    @staticmethod
+    def size_domain_by_url(statics: StaticsFiles, url: URL) -> int:
+        path = statics.path / url.netloc
+        if not path.exists():
+            return 0
+        return statics.directory_size(path)
 
 
 class NeoDatabase:
@@ -309,7 +332,7 @@ class NeoDatabase:
 
 
 class Exporter:
-    def __init__(self, snapshots: list[SnapshotStatic]):
+    def __init__(self, snapshots: list[StaticSnapshot]):
         self.snapshots = snapshots
 
     def clean_title(self, title):
@@ -347,7 +370,7 @@ class Exporter:
 
 
 class MDExporter(Exporter):
-    def website_md_line(self, snapshot: SnapshotStatic):
+    def website_md_line(self, snapshot: StaticSnapshot):
         title = self.clean_title(snapshot.title)
         url = snapshot.url
         created_at = self.humanize_datetime(snapshot.created_at)
@@ -365,10 +388,11 @@ class MDExporter(Exporter):
 
 
 class HTMLExporter(Exporter):
-    def website_detail_list(self, snapshot: SnapshotStatic):
+    def website_detail_list(self, snapshot: StaticSnapshot):
         title = self.clean_title(snapshot.title)
         snap_url = self.trunc_url(snapshot.url)
         url = snapshot.index_file
+        screenshot = snapshot.index_file
         size = self.humanize_size(snapshot.size)
         created_at = self.humanize_datetime(snapshot.created_at)
 
@@ -376,6 +400,7 @@ class HTMLExporter(Exporter):
         <tr>
             <td class="td_title">{title}</td>
             <td><a href="{url}">{snap_url}</a></td>
+            <td><span><a href="{snapshot.screenshot}">&#x1F4F7;</a></span></td>
             <td>{size}</td>
             <td>{created_at}</td>
         </tr>"""
@@ -385,6 +410,7 @@ class HTMLExporter(Exporter):
             <tr>
             <th>Title</th>
             <th>URL</th>
+            <th>SS</th>
             <th>Size</th>
             <th>Created at</th>
             </tr>\n"""
@@ -395,7 +421,8 @@ class Alexandria:
     def __init__(self, config: Config):
         self.config = config
         self.db = NeoDatabase(config.db)
-        self.statics = StaticsFiles(config.db_statics)
+        self.stats_snapshots = StaticsFiles(config.db_statics, config.path)
+        self.stats_screenshots = StaticsFiles(config.screenshots_path, config.path)
         self.db.initial_migration()
         self.snapshot_column_name = "websites"
         self.initial_migration()
@@ -423,8 +450,10 @@ class Alexandria:
         db_snaps = self.db[self.snapshot_column_name]
         assert db_snaps is not None, "missing 'websites' in database"
 
-    def get_snapshot_statics(self, snap: Snapshot) -> SnapshotStatic:
-        return SnapshotStatic.from_statics(self.statics, snap.url, snap.created_at)
+    def get_snapshot_statics(self, snap: Snapshot) -> StaticSnapshot:
+        return StaticSnapshot.from_statics(
+            self.stats_screenshots, self.stats_snapshots, snap.url, snap.created_at
+        )
 
     def insert_snapshot(self, snap: Snapshot):
         self.validate_db()
@@ -434,11 +463,14 @@ class Alexandria:
         self.validate_db()
         return (Snapshot(**snapshot) for snapshot in self.db[self.snapshot_column_name])
 
-    def get_snapshots_static(self) -> list[SnapshotStatic]:
+    def get_snapshots_static(self) -> list[StaticSnapshot]:
         self.validate_db()
         return (
-            SnapshotStatic.from_statics(
-                self.statics, snapshot["url"], snapshot["created_at"]
+            StaticSnapshot.from_statics(
+                self.stats_screenshots,
+                self.stats_snapshots,
+                snapshot["url"],
+                snapshot["created_at"],
             )
             for snapshot in self.db[self.snapshot_column_name]
         )
@@ -492,7 +524,47 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
-class WGet:
+class Process:
+    required = False
+    quiet = False
+
+    def run(self, cmd):
+        stderr = None
+        stdout = None
+        if self.quiet:
+            stderr = subprocess.DEVNULL
+            stdout = subprocess.DEVNULL
+        return subprocess.run(
+            cmd, check=False, stderr=stderr, stdout=stdout
+        ).check_returncode
+
+
+class Chromium(Process):
+    quiet = True
+
+    def __init__(self, path: Path):
+        self.cmd = "chromium"
+        self.path = path
+
+    def screenshot(self, url: URL, dest):
+        cmd = [self.cmd]
+        cmd.extend(
+            [
+                "--disable-gpu",
+                "--headless",
+                "--hide-scrollbars",
+                "--window-size=1920,1080",
+            ]
+        )
+        cmd.append(f"--screenshot={self.path / dest}")
+        cmd.append(str(url))
+
+        return self.run(cmd)
+
+
+class WGet(Process):
+    required = True
+
     def __init__(self, path: Path, deep=1):
         self.cmd = "wget"
         self.deep = deep
@@ -532,7 +604,7 @@ class WGet:
         cmd.extend(["--domains", url.netloc])
         cmd.extend(["--no-parent", str(url)])
 
-        return subprocess.run(cmd, check=False).check_returncode
+        return self.run(cmd)
 
 
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
@@ -544,7 +616,7 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
     handler.debug = config.quiet
     handler.alx = alx
 
-    httpd = server(server_addr, partial(handler, directory=alx.statics.path))
+    httpd = server(server_addr, partial(handler, directory=config.path))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -553,6 +625,7 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
 
 def snapshot_static_site(config: Config):
     wget = WGet(config.db_statics, deep=config.download_deep)
+    screenshoter = Chromium(config.screenshots_path)
     urls = config.urls
     alx = Alexandria(config)
 
@@ -563,11 +636,13 @@ def snapshot_static_site(config: Config):
             print(f"{url} is already in the database snapshots - skiping the download")
             continue
 
-        wget.fetch_site(url)
         snapshot = Snapshot(url=url)
-        if alx.get_snapshot_statics(
-            snapshot
-        ):  # validate if exists on statisc - success download
+
+        wget.fetch_site(url)
+        screenshoter.screenshot(url, snapshot.screenshot_file())
+
+        # validate if exists on statisc - success download
+        if alx.get_snapshot_statics(snapshot):
             alx.insert_snapshot(snapshot)
 
     alx.save()

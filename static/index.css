@@ -112,6 +112,7 @@ tr {
 td {
   padding: 0.5rem;
   text-align: center;
+  vertical-align: middle;
   color: rgb(35, 63, 51);
   background: rgb(139, 228, 189);
 }
