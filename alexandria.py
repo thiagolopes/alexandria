@@ -67,13 +67,13 @@ class URL:
 class CLIActionChoices(Flag):
     SERVE = auto()
     SNAPSHOT_SITE = auto()
-    GENERATE_README = auto()
-    GENERATE_THUMBNAILS = auto()
-
+    MIGRATE = auto()
 
 @dataclass(kw_only=True)
 class Config:
     path: Path
+
+    migrate: bool
 
     _generate_readme: bool
     _readme_name: str
@@ -127,9 +127,12 @@ class Config:
             debug=args.verbose,
             _skip_download=args.skip,
             download_deep=args.download_deep,
+            migrate=args.migrate,
         )
 
     def get_choice(self) -> CLIActionChoices:
+        if self.migrate:
+            return CLIActionChoices.MIGRATE
         if self._generate_readme is True:
             return CLIActionChoices.GENERATE_README
         if self.urls:
@@ -623,6 +626,14 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
         httpd.server_close()
 
 
+def migrate(config):
+    wget = WGet(config.db_statics, deep=config.download_deep)
+    screenshoter = Chromium(config.screenshots_path)
+    alx = Alexandria(config)
+    for snapshot in alx.get_snapshots():
+        wget.fetch_site(snapshot.url)
+        screenshoter.screenshot(snapshot.url, snapshot.screenshot_file())
+
 def snapshot_static_site(config: Config):
     wget = WGet(config.db_statics, deep=config.download_deep)
     screenshoter = Chromium(config.screenshots_path)
@@ -701,6 +712,13 @@ def main():
         type=bool,
     )
     parser.add_argument(
+        "--migrate",
+        default=False,
+        help="Re-download all assets",
+        action=argparse.BooleanOptionalAction,
+        type=bool,
+    )
+    parser.add_argument(
         "--readme",
         help="Generate the database README.",
         default=False,
@@ -721,6 +739,8 @@ def main():
     config = Config.from_args_parse(parser)
 
     match config.get_choice():
+        case CLIActionChoices.MIGRATE:
+            migrate(config)
         case CLIActionChoices.SNAPSHOT_SITE:
             snapshot_static_site(config)
             generate_readme(config)
