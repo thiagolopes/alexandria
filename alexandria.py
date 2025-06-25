@@ -70,18 +70,19 @@ class CLIActionChoices(Flag):
     GENERATE_THUMBNAILS = auto()
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Config:
     path: Path
-
 
     _generate_readme: bool
     _readme_name: str
 
+    quiet: bool
     debug: bool
     server_port: int
 
-    urls_to_snap: list[Path] = field(default_factory=list)
+    urls: list[Path] = field(default_factory=list)
+    download_deep: int
     _skip_download: bool = False  # debug only
 
     _db_name: str = "database.json"
@@ -89,8 +90,8 @@ class Config:
 
     def __post_init__(self):
         self.path = Path(self.path)
-        for i, url in enumerate(self.urls_to_snap):
-            self.urls_to_snap[i] = URL(url)
+        for i, url in enumerate(self.urls):
+            self.urls[i] = URL(url)
 
     @property
     def skip(self):
@@ -113,26 +114,28 @@ class Config:
         args = parser.parse_args()
         return cls(
             path=args.directory,
-            urls_to_snap=args.url,
+            urls=args.urls,
             _generate_readme=args.readme,
             _readme_name=args.readme_file_name,
             server_port=args.port,
+            quiet=args.quiet,
             debug=args.verbose,
             _skip_download=args.skip,
+            download_deep=args.download_deep,
         )
 
     def get_choice(self) -> CLIActionChoices:
-        if self.urls_to_snap:
-            return CLIActionChoices.SNAPSHOT_SITE
-
         if self._generate_readme is True:
             return CLIActionChoices.GENERATE_README
-
+        if self.urls:
+            return CLIActionChoices.SNAPSHOT_SITE
         return CLIActionChoices.SERVE
+
 
 class StaticsFiles:
     def __init__(self, path):
         self.path = Path(path)
+        self.initial_migration()
 
     def __iter__(self):
         for directory in self.path.iterdir():
@@ -141,6 +144,9 @@ class StaticsFiles:
 
     def __len__(self):
         return len(list(self.__iter__()))
+
+    def initial_migration(self):
+        self.path.mkdir(exist_ok=True, parents=True)
 
     def list_all_snapshot_domains(self) -> list[str]:
         for directory in self.__iter__():
@@ -210,6 +216,7 @@ class HTMLFile:
             return html.unescape(re_match.groups()[0])
         return self.file_path.name
 
+
 @dataclass(kw_only=True)
 class Snapshot:
     url: URL
@@ -224,8 +231,14 @@ class Snapshot:
         return hash(self.url)
 
     def __eq__(self, other):
+        assert isinstance(other, type(self)), type(other)
         return other.url == self.url
 
+    def json(self):
+        return {"url": str(self.url), "created_at": self.created_at.isoformat()}
+
+
+# convert to Snapshot contains a list with StaticSnapshots.
 @dataclass(kw_only=True)
 class SnapshotStatic(Snapshot):
     title: str = field(repr=False)
@@ -233,10 +246,8 @@ class SnapshotStatic(Snapshot):
     index_file: Path = field(repr=False)
 
     @classmethod
-    def from_statics(
-        cls, statics: StaticsFiles, url: str, created_at: datetime
-    ):
-        url_k = URL(url)
+    def from_statics(cls, statics: StaticsFiles, url: str, created_at: datetime):
+        url_k = URL(str(url))
         index_html = statics.resolve_snapshot_index(url_k)
         title = HTMLFile(index_html).title()
         size = statics.size_domain_by_url(url_k)
@@ -248,6 +259,7 @@ class SnapshotStatic(Snapshot):
             size=size,
             index_file=index_html.relative_to(statics.path),
         )
+
 
 class NeoDatabase:
     def __init__(self, database_file: Path):
@@ -387,43 +399,60 @@ class Alexandria:
         self.statics = StaticsFiles(config.db_statics)
         self.db.initial_migration()
         self.snapshot_column_name = "websites"
+        self.initial_migration()
+
+    def save(self):
+        self.db.save()
+
+    def initial_migration(self):
+        try:
+            self.validate_db()
+        except AssertionError:
+            self.db[self.snapshot_column_name] = []
+            self.db.save()
+
+    def get_snapshot(self, url: URL):
+        all_snaps = set(self.get_snapshots())
+        snap = Snapshot(url=url)
+        return snap if snap in all_snaps else None
+        # if self.db.find_one(self.snapshot_column_name, {"url": str(url)}):
+        #     return True
+        # return False
 
     def validate_db(self):
+        self.db.load()
         db_snaps = self.db[self.snapshot_column_name]
         assert db_snaps is not None, "missing 'websites' in database"
 
-    def insert_snapshot(self, url: URL):
+    def get_snapshot_statics(self, snap: Snapshot) -> SnapshotStatic:
+        return SnapshotStatic.from_statics(self.statics, snap.url, snap.created_at)
+
+    def insert_snapshot(self, snap: Snapshot):
         self.validate_db()
-        sp = Snapshot(url=url)
-        self.db.insert_one(self.snapshot_column_name, asdict(sp))
+        self.db.insert_one(self.snapshot_column_name, snap.json())
+
+    def get_snapshots(self) -> list[Snapshot]:
+        self.validate_db()
+        return (Snapshot(**snapshot) for snapshot in self.db[self.snapshot_column_name])
 
     def get_snapshots_static(self) -> list[SnapshotStatic]:
         self.validate_db()
-        snaps = []
-        for snapshot in db_snaps:
-            sp = Snapshot(snapshot["url"], snapshot["created_at"])
-            snaps.append(sp)
-        return snaps
-
-    def get_snapshots_static(self) -> list[SnapshotStatic]:
-        self.validate_db()
-        snaps = []
-        for snapshot in self.db[self.snapshot_column_name]:
-            sp = SnapshotStatic.from_statics(
+        return (
+            SnapshotStatic.from_statics(
                 self.statics, snapshot["url"], snapshot["created_at"]
             )
-            snaps.append(sp)
-        return snaps
+            for snapshot in self.db[self.snapshot_column_name]
+        )
 
     def genereate_html_snapshots_list(self) -> str:
         self.db.load()
         snaps = self.get_snapshots_static()
-        return HTMLExporter(snaps[::-1]).generate()
+        return HTMLExporter(list(snaps)[::-1]).generate()
 
     def generate_readme_snapshots_list(self) -> str:
         self.db.load()
         snaps = self.get_snapshots_static()
-        return MDExporter(snaps[::-1]).generate()
+        return MDExporter(list(snaps)[::-1]).generate()
 
 
 class AlexandriaStaticServer(SimpleHTTPRequestHandler):
@@ -470,11 +499,33 @@ class WGet:
         self.deep = deep
         self.path = path
 
+    def add_browser_headers(self, cmd, gzip=False):
+        cmd.extend(
+            [
+                "--header",
+                "Accept: text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            ]
+        )
+        cmd.extend(["--header", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8"])
+        cmd.extend(["--header", "DNT: 1"])
+        cmd.extend(["--header", "Connection: keep-alive"])
+        cmd.extend(["--header", "Upgrade-Insecure-Requests: 1"])
+        cmd.extend(["--header", "Sec-Fetch-Dest: document"])
+        cmd.extend(["--header", "Sec-Fetch-Mode: navigate"])
+        cmd.extend(["--header", "Sec-Fetch-Site: none"])
+        cmd.extend(["--header", "Sec-Fetch-User: ?1"])
+        cmd.extend(["--header", "Cache-Control: max-age=0"])
+        if gzip:
+            cmd.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
+
     def fetch_site(self, url: URL):
         cmd = [self.cmd]
+
+        self.add_browser_headers(cmd)
         cmd.extend(["-P", str(self.path)])
         cmd.extend(["--mirror", "-p", "--recursive"])
-        cmd.extend(["-l", self.deep])
+        cmd.extend(["-l", str(self.deep)])
         cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
         cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
         cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
@@ -482,7 +533,7 @@ class WGet:
         cmd.extend(["--domains", url.netloc])
         cmd.extend(["--no-parent", str(url)])
 
-        subprocess.run(cmd, check=False)
+        return subprocess.run(cmd, check=False).check_returncode
 
 
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
@@ -491,26 +542,37 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
     alx = Alexandria(config)
     server_addr = ("", config.server_port)
-    handler.debug = config.debug
+    handler.debug = config.quiet
     handler.alx = alx
+
     httpd = server(server_addr, partial(handler, directory=alx.statics.path))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         httpd.server_close()
-        # title_print(f"Alexandria server:{pref.server_port} ended!")
-        sys.exit()
 
 
 def snapshot_static_site(config: Config):
-    wget = WGet(config.db_statics)
-    urls = config.urls_to_snap
+    wget = WGet(config.db_statics, deep=config.download_deep)
+    urls = config.urls
     alx = Alexandria(config)
 
+    # check if already_exists
+    # check if was success to add on db
     for url in urls:
-        wget.fetch_site(url)
-        alx.insert_snapshot(url)
+        if alx.get_snapshot(url):
+            print(f"{url} is already in the database snapshots - skiping the download")
+            continue
 
+        wget.fetch_site(url)
+        snapshot = Snapshot(url=url)
+        if alx.get_snapshot_statics(
+            snapshot
+        ):  # validate if exists on statisc - success download
+            alx.insert_snapshot(snapshot)
+
+    alx.save()
+    print(f"snapshot action finalized")
 
 
 def generate_readme(config):
@@ -520,19 +582,27 @@ def generate_readme(config):
         f.write(content)
 
 
-if __name__ == "__main__":
-    print("Alexandria - CLI website preservation")
+def main():
+    print("Αλεξάνδρεια/Alexandria/الإسكندرية - CLI website preservation")
     parser = argparse.ArgumentParser(
         prog="Alexandria",
         description="A tool to manage your personal website backup libary",
         epilog="Keep and hold",
     )
-    parser.add_argument("url", help="One or more internet links (URL)", nargs="*")
+    parser.add_argument(
+        "urls", help="One or a list of URLs to snapshot websites", nargs="*"
+    )
     parser.add_argument(
         "-p",
         "--port",
         help="The port to run server, 8000 is default",
         default=8000,
+        type=int,
+    )
+    parser.add_argument(
+        "--download-deep",
+        help="How deep in links should download",
+        default=1,
         type=int,
     )
     parser.add_argument(
@@ -546,6 +616,13 @@ if __name__ == "__main__":
         "--skip",
         help="Skip download process, only add entry.",
         default=False,
+        action=argparse.BooleanOptionalAction,
+        type=bool,
+    )
+    parser.add_argument(
+        "--quiet",
+        help="Silencie the webserver logs.",
+        default=True,
         action=argparse.BooleanOptionalAction,
         type=bool,
     )
@@ -572,17 +649,14 @@ if __name__ == "__main__":
     match config.get_choice():
         case CLIActionChoices.SNAPSHOT_SITE:
             snapshot_static_site(config)
+            generate_readme(config)
         case CLIActionChoices.GENERATE_README:
             generate_readme(config)
         case CLIActionChoices.SERVE:
             run_server(config)
 
-    print("Αντίο")
-    # else:
-    # for url in url_to_download:
-    # download_website_static(url, config.db_statics)
-    # webpage = WebPage(url, config.db_statics)
-    # database.add(webpage)
+    print("Αντίο/bye/مع السلامة!")
 
-    # database.save()
-    # generate_md_database(database.to_md(), config.readme)
+
+if __name__ == "__main__":
+    main()
