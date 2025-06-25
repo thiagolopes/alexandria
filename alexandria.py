@@ -1,5 +1,6 @@
 #! /bin/python3
 import argparse
+import html
 import json
 import re
 import subprocess
@@ -192,6 +193,7 @@ class StaticsFiles:
         return total
 
 
+@cache
 class HTMLFile:
     # this only parses basic tags, do not use as AST analizer
     # using HTMLParser from html.parser shows slower, maybe later.
