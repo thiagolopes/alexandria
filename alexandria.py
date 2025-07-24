@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Flag, auto
@@ -66,25 +67,22 @@ class URL:
 
 class CLIActionChoices(Flag):
     SERVE = auto()
-    SNAPSHOT_SITE = auto()
-    MIGRATE = auto()
+    ADD = auto()
+    EXPORT = auto()
+    UPDATE = auto()
 
 @dataclass(kw_only=True)
 class Config:
-    path: Path
+    path: Path = Path("alx")
+    migrate: bool = False
+    generate_readme: bool = False
+    readme_file_name: str = "README.md"
 
-    migrate: bool
-
-    _generate_readme: bool
-    _readme_name: str
-
-    quiet: bool
-    debug: bool
-    server_port: int
+    debug: bool = False
+    server_port: int = 8000
 
     urls: list[Path] = field(default_factory=list)
-    download_deep: int
-    _skip_download: bool = False  # debug only
+    download_deep: int = 1
 
     _db_name: str = "database.json"
     _db_statics_name: str = "mirrors"
@@ -93,10 +91,6 @@ class Config:
         self.path = Path(self.path)
         for i, url in enumerate(self.urls):
             self.urls[i] = URL(url)
-
-    @property
-    def skip(self):
-        return self.debug and self._skip_download
 
     @property
     def db(self) -> Path:
@@ -112,7 +106,7 @@ class Config:
 
     @property
     def readme(self) -> Path:
-        return (self.path / self._readme_name).absolute()
+        return (self.path / self.readme_file_name).absolute()
 
     @classmethod
     def from_args_parse(cls, parser):
@@ -120,24 +114,27 @@ class Config:
         return cls(
             path=args.directory,
             urls=args.urls,
-            _generate_readme=args.readme,
-            _readme_name=args.readme_file_name,
+            generate_readme=args.readme,
+            readme_file_name=args.readme_file_name,
             server_port=args.port,
-            quiet=args.quiet,
             debug=args.verbose,
-            _skip_download=args.skip,
             download_deep=args.download_deep,
             migrate=args.migrate,
         )
 
     def get_choice(self) -> CLIActionChoices:
+        action = CLIActionChoices(0)
+
         if self.migrate:
-            return CLIActionChoices.MIGRATE
-        if self._generate_readme is True:
-            return CLIActionChoices.GENERATE_README
+            action |= CLIActionChoices.UPDATE
+        if self.generate_readme is True:
+            action |= CLIActionChoices.EXPORT
+
         if self.urls:
-            return CLIActionChoices.SNAPSHOT_SITE
-        return CLIActionChoices.SERVE
+            action |= CLIActionChoices.ADD
+        else:
+            action |= CLIActionChoices.SERVE
+        return action
 
 
 class StaticsFiles:
@@ -187,10 +184,10 @@ class HTMLFile:
         self.file_path = file_path
 
     def title(self):
-        bytes_to_read = int(self.file_path.stat().st_size * 0.5)  # 50% arbitrary number
+        read_bytes = int(self.file_path.stat().st_size * 0.5)  # 50% arbitrary number
 
-        with open(self.file_path, "r") as f:
-            html_cont = f.read(bytes_to_read)
+        with open(self.file_path, "rb") as f:
+            html_cont = f.read(read_bytes).decode("utf-8")
 
         if re_match := self.re_find_title.search(html_cont):
             return html.unescape(re_match.groups()[0])
@@ -315,7 +312,7 @@ class NeoDatabase:
         # print("[DATABASE] Saved.")
 
     def load(self):
-        with open(self.database_file, "rb") as f:
+        with open(self.database_file, "r") as f:
             self.data = json.load(f)
         # print("[DATABASE] Load")
 
@@ -528,35 +525,45 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
 
 
 class Process:
-    required = False
-    quiet = False
+    required:bool = False
+    quiet:bool = False
+    cmd: str
 
-    def run(self, cmd):
+    @cached_property
+    def available(self):
+        return shutil.which(self.cmd)
+
+    def run(self, cmd) -> int:
+        if not self.available:
+            if self.required:
+                raise ProgramDependencyNotFound()
+            return 1
+
         stderr = None
         stdout = None
         if self.quiet:
             stderr = subprocess.DEVNULL
             stdout = subprocess.DEVNULL
-        return subprocess.run(
-            cmd, check=False, stderr=stderr, stdout=stdout
-        ).check_returncode
+        return subprocess.run(cmd, check=False, stderr=stderr, stdout=stdout).check_returncode
 
 
 class Chromium(Process):
     quiet = True
+    cmd = "chromium"
 
     def __init__(self, path: Path):
-        self.cmd = "chromium"
         self.path = path
 
     def screenshot(self, url: URL, dest):
         cmd = [self.cmd]
         cmd.extend(
             [
+                "--run-all-compositor-stages-before-draw",
                 "--disable-gpu",
-                "--headless",
+                "--headless=new",
+                "--virtual-time-budget=30000",
                 "--hide-scrollbars",
-                "--window-size=1920,1080",
+                "--window-size=1920,4000",
             ]
         )
         cmd.append(f"--screenshot={self.path / dest}")
@@ -567,9 +574,9 @@ class Chromium(Process):
 
 class WGet(Process):
     required = True
+    cmd = "wget"
 
     def __init__(self, path: Path, deep=1):
-        self.cmd = "wget"
         self.deep = deep
         self.path = path
 
@@ -581,6 +588,8 @@ class WGet(Process):
                 "application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             ]
         )
+        cmd.extend(["--header", "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)"])
+        cmd.extend(["--header", "Accept: text/html,application/xhtml+xml"])
         cmd.extend(["--header", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8"])
         cmd.extend(["--header", "DNT: 1"])
         cmd.extend(["--header", "Connection: keep-alive"])
@@ -616,7 +625,7 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
     # title_print(shell_link_mask.format(f"http://localhost:{pref.server_port}", f"http://localhost:{pref.server_port}"))
     alx = Alexandria(config)
     server_addr = ("", config.server_port)
-    handler.debug = config.quiet
+    handler.debug = config.debug
     handler.alx = alx
 
     httpd = server(server_addr, partial(handler, directory=config.path))
@@ -626,22 +635,13 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
         httpd.server_close()
 
 
-def migrate(config):
-    wget = WGet(config.db_statics, deep=config.download_deep)
-    screenshoter = Chromium(config.screenshots_path)
-    alx = Alexandria(config)
-    for snapshot in alx.get_snapshots():
-        wget.fetch_site(snapshot.url)
-        screenshoter.screenshot(snapshot.url, snapshot.screenshot_file())
-
-def snapshot_static_site(config: Config):
+def add_snapshots(config: Config):
     wget = WGet(config.db_statics, deep=config.download_deep)
     screenshoter = Chromium(config.screenshots_path)
     urls = config.urls
     alx = Alexandria(config)
 
-    # check if already_exists
-    # check if was success to add on db
+    # check if already downloaded
     for url in urls:
         if alx.get_snapshot(url):
             print(f"{url} is already in the database snapshots - skiping the download")
@@ -660,7 +660,7 @@ def snapshot_static_site(config: Config):
     print(f"snapshot action finalized")
 
 
-def generate_readme(config):
+def export_readme(config):
     alx = Alexandria(config)
     content = alx.generate_readme_snapshots_list()
     with open(config.readme, "w") as f:
@@ -681,27 +681,20 @@ def main():
         "-p",
         "--port",
         help="The port to run server, 8000 is default",
-        default=8000,
+        default=Config.server_port,
         type=int,
     )
     parser.add_argument(
         "--download-deep",
         help="How deep in links should download",
-        default=1,
+        default=Config.download_deep,
         type=int,
     )
     parser.add_argument(
         "-v",
         "--verbose",
         help="Enable verbose",
-        default=False,
-        type=bool,
-    )
-    parser.add_argument(
-        "--skip",
-        help="Skip download process, only add entry.",
-        default=False,
-        action=argparse.BooleanOptionalAction,
+        default=Config.debug,
         type=bool,
     )
     parser.add_argument(
@@ -713,7 +706,7 @@ def main():
     )
     parser.add_argument(
         "--migrate",
-        default=False,
+        default=Config.migrate,
         help="Re-download all assets",
         action=argparse.BooleanOptionalAction,
         type=bool,
@@ -721,36 +714,36 @@ def main():
     parser.add_argument(
         "--readme",
         help="Generate the database README.",
-        default=False,
+        default=Config.generate_readme,
         type=bool,
     )
     parser.add_argument(
         "--readme-file-name",
         help="Name to use in README generation.",
-        default="README.md",
+        default=Config.readme_file_name,
         type=str,
     )
     parser.add_argument(
         "--directory",
         help="Path to store database and statics to serve.",
-        default="alx",
+        default=Config.path,
         type=Path,
     )
     config = Config.from_args_parse(parser)
 
-    match config.get_choice():
-        case CLIActionChoices.MIGRATE:
-            migrate(config)
-        case CLIActionChoices.SNAPSHOT_SITE:
-            snapshot_static_site(config)
-            generate_readme(config)
-        case CLIActionChoices.GENERATE_README:
-            generate_readme(config)
-        case CLIActionChoices.SERVE:
-            run_server(config)
+    action = config.get_choice()
+    if CLIActionChoices.ADD in action:
+        add_snapshots(config)
+
+        if CLIActionChoices.UPDATE in action:
+            pass
+        if CLIActionChoices.EXPORT in action:
+            export_readme(config)
+
+    if CLIActionChoices.SERVE in action:
+        run_server(config)
 
     print("Αντίο/bye/مع السلامة!")
-
 
 if __name__ == "__main__":
     main()
