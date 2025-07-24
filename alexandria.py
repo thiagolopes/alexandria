@@ -89,7 +89,7 @@ class Config:
     urls: list[Path] = field(default_factory=list)
     download_deep: int = 1
 
-    _db_name: str = "database.json"
+    db_name: str = "database.json"
     _db_statics_name: str = "mirrors"
 
     def __post_init__(self):
@@ -99,7 +99,7 @@ class Config:
 
     @property
     def db(self) -> Path:
-        return (self.path / self._db_name).absolute()
+        return (self.path / self.db_name).absolute()
 
     @property
     def db_statics(self) -> Path:
@@ -125,6 +125,7 @@ class Config:
             debug=args.verbose,
             download_deep=args.download_deep,
             migrate=args.migrate,
+            db_name=args.database_name,
         )
 
     def get_choice(self) -> CLIActionChoices:
@@ -741,6 +742,12 @@ def main():
         help="Path to store database and statics to serve.",
         default=Config.path,
         type=Path,
+    )
+    parser.add_argument(
+        "--database-name",
+        help="Name of database file (JSON).",
+        default=Config.db_name,
+        type=str,
     )
     config = Config.from_args_parse(parser)
 
