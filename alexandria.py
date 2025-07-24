@@ -16,6 +16,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+class ProgramDependencyNotFound(Exception):
+    pass
+
+
 class StaticNotFound(Exception):
     pass
 
@@ -70,6 +74,7 @@ class CLIActionChoices(Flag):
     ADD = auto()
     EXPORT = auto()
     UPDATE = auto()
+
 
 @dataclass(kw_only=True)
 class Config:
@@ -525,8 +530,8 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
 
 
 class Process:
-    required:bool = False
-    quiet:bool = False
+    required: bool = False
+    quiet: bool = False
     cmd: str
 
     @cached_property
@@ -536,7 +541,9 @@ class Process:
     def run(self, cmd) -> int:
         if not self.available:
             if self.required:
-                raise ProgramDependencyNotFound()
+                raise ProgramDependencyNotFound(
+                    f"{self.__class__.__name__} is a required dependency, please install it using your package manager"
+                )
             return 1
 
         stderr = None
@@ -544,7 +551,9 @@ class Process:
         if self.quiet:
             stderr = subprocess.DEVNULL
             stdout = subprocess.DEVNULL
-        return subprocess.run(cmd, check=False, stderr=stderr, stdout=stdout).check_returncode
+        return subprocess.run(
+            cmd, check=False, stderr=stderr, stdout=stdout
+        ).check_returncode
 
 
 class Chromium(Process):
@@ -588,7 +597,12 @@ class WGet(Process):
                 "application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             ]
         )
-        cmd.extend(["--header", "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)"])
+        cmd.extend(
+            [
+                "--header",
+                "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)",
+            ]
+        )
         cmd.extend(["--header", "Accept: text/html,application/xhtml+xml"])
         cmd.extend(["--header", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8"])
         cmd.extend(["--header", "DNT: 1"])
@@ -657,7 +671,6 @@ def add_snapshots(config: Config):
             alx.insert_snapshot(snapshot)
 
     alx.save()
-    print(f"snapshot action finalized")
 
 
 def export_readme(config):
@@ -744,6 +757,7 @@ def main():
         run_server(config)
 
     print("Αντίο/bye/مع السلامة!")
+
 
 if __name__ == "__main__":
     main()
