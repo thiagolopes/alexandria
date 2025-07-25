@@ -15,6 +15,11 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+class CLIActionChoices(Flag):
+    SERVE = auto()
+    ADD = auto()
+    EXPORT = auto()
+    UPDATE = auto()
 
 class ProgramDependencyNotFound(Exception):
     pass
@@ -67,13 +72,6 @@ class URL:
 
     def unique(self):
         return md5(str(self.original_url).encode("utf-8")).hexdigest()
-
-
-class CLIActionChoices(Flag):
-    SERVE = auto()
-    ADD = auto()
-    EXPORT = auto()
-    UPDATE = auto()
 
 
 @dataclass(kw_only=True)
@@ -190,6 +188,7 @@ class HTMLFile:
         self.file_path = file_path
 
     def title(self):
+        # improve this to clamp the file size with some max_size (100MB+) instead arbitrary 50% file size
         read_bytes = int(self.file_path.stat().st_size * 0.5)  # 50% arbitrary number
 
         with open(self.file_path, "rb") as f:
@@ -423,6 +422,7 @@ class HTMLExporter(Exporter):
         return table + " ".join(self.website_detail_list(web) for web in self.snapshots)
 
 
+# move to here all the commands and logic
 class Alexandria:
     def __init__(self, config: Config):
         self.config = config
@@ -534,12 +534,22 @@ class Process:
     required: bool = False
     quiet: bool = False
     cmd: str
+    default_args: list[str] | None = None
+
+    @property
+    def comand(self):
+        if self.default_args is None:
+            return [self.cmd]
+        return [self.cmd] + self.default_args
 
     @cached_property
     def available(self):
         return shutil.which(self.cmd)
 
-    def run(self, cmd) -> int:
+    def run(self, cmd, quiet: None | bool = None) -> int:
+        if quiet is None:
+            quiet = self.quiet
+
         if not self.available:
             if self.required:
                 raise ProgramDependencyNotFound(
@@ -549,7 +559,7 @@ class Process:
 
         stderr = None
         stdout = None
-        if self.quiet:
+        if quiet:
             stderr = subprocess.DEVNULL
             stdout = subprocess.DEVNULL
         return subprocess.run(
@@ -565,7 +575,7 @@ class Chromium(Process):
         self.path = path
 
     def screenshot(self, url: URL, dest):
-        cmd = [self.cmd]
+        cmd = self.comand
         cmd.extend(
             [
                 "--run-all-compositor-stages-before-draw",
@@ -618,7 +628,7 @@ class WGet(Process):
             cmd.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
 
     def fetch_site(self, url: URL):
-        cmd = [self.cmd]
+        cmd = self.comand
 
         self.add_browser_headers(cmd)
         cmd.extend(["-P", str(self.path)])
@@ -633,6 +643,46 @@ class WGet(Process):
 
         return self.run(cmd)
 
+
+class Git(Process):
+    required = False
+    cmd = "git"
+    quiet = False
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.default_args = ["-C", f"{self.path}"]
+
+    def is_git_repo(self):
+        return (self.path / Path(".git")).is_dir()
+
+    def get_head(self):
+        cmd = self.comand
+        cmd.extend(["symbolic-ref", "--short", "HEAD"])
+        return self.run(cmd)
+
+    def get_origin(self):
+        cmd = self.comand
+        cmd.extend(["remote"])
+        return self.run(cmd)
+
+    def init_repo(self):
+        cmd = self.comand
+        cmd.extend(["init"])
+        return self.run(cmd)
+
+    def push(self):
+        pass
+
+    def commit(self, message):
+        cmd = self.comand
+        cmd.extend(["commit", "-m", message])
+        return self.run(cmd)
+
+    def add(self, file="."):
+        cmd = self.comand
+        cmd.extend(["add", file])
+        return self.run(cmd)
 
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
@@ -653,8 +703,12 @@ def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer
 def add_snapshots(config: Config):
     wget = WGet(config.db_statics, deep=config.download_deep)
     screenshoter = Chromium(config.screenshots_path)
+    syncer = Git(config.path)
     urls = config.urls
     alx = Alexandria(config)
+
+    if not syncer.is_git_repo():
+        syncer.init_repo()
 
     # check if already downloaded
     for url in urls:
@@ -668,9 +722,13 @@ def add_snapshots(config: Config):
         screenshoter.screenshot(url, snapshot.screenshot_file())
 
         # validate if exists on statisc - success download
-        if alx.get_snapshot_statics(snapshot):
+        snapshot_static = alx.get_snapshot_statics(snapshot)
+        if snapshot_static:
+            syncer.add()
+            syncer.commit(f"New snapshot: {snapshot_static.title}")
             alx.insert_snapshot(snapshot)
 
+    # syncer.push()
     alx.save()
 
 
