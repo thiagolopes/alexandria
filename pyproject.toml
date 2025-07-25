@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alexandria"
+version = "0.0.1"
+requires-python = ">= 3.10"
+readme = "README.md"
+license = "GPL-3.0"
+
+[project.scripts]
+alexandria-cli = "alexandria:main"
