@@ -1,3 +1,4 @@
+#! /bin/python3
 from hashlib import md5
 import argparse
 import html
@@ -129,13 +130,14 @@ class Config:
     def get_choice(self) -> CLIActionChoices:
         action = CLIActionChoices(0)
 
-        if self.migrate:
-            action |= CLIActionChoices.UPDATE
+
         if self.generate_readme is True:
             action |= CLIActionChoices.EXPORT
 
         if self.urls:
             action |= CLIActionChoices.ADD
+        elif self.migrate is True:
+            action |= CLIActionChoices.UPDATE
         else:
             action |= CLIActionChoices.SERVE
         return action
@@ -684,6 +686,11 @@ class Git(Process):
         cmd.extend(["add", file])
         return self.run(cmd)
 
+    def migrate(self):
+        if not self.is_git_repo():
+            self.init_repo()
+
+
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
     # title_print(f"Start server at {pref.server_port}")
@@ -707,8 +714,7 @@ def add_snapshots(config: Config):
     urls = config.urls
     alx = Alexandria(config)
 
-    if not syncer.is_git_repo():
-        syncer.init_repo()
+    syncer.migrate()
 
     # check if already downloaded
     for url in urls:
@@ -730,6 +736,25 @@ def add_snapshots(config: Config):
 
     # syncer.push()
     alx.save()
+
+
+def migrate(config):
+    alx = Alexandria(config)
+    wget = WGet(config.db_statics, deep=config.download_deep)
+    screenshoter = Chromium(config.screenshots_path)
+    syncer = Git(config.path)
+    syncer.migrate()
+
+    print("Migrate started.")
+    total = 0
+    for snapshot in alx.get_snapshots_static():
+        print(f"URL: {snapshot.url}")
+        wget.fetch_site(snapshot.url)
+        screenshoter.screenshot(snapshot.url, snapshot.screenshot_file())
+
+    syncer.add()
+    syncer.commit(f"Migration completed, total: {total} at {datetime.now().isoformat()}")
+    print(f"Migrate finished, total downloads: {total}")
 
 
 def export_readme(config):
@@ -812,12 +837,11 @@ def main():
     action = config.get_choice()
     if CLIActionChoices.ADD in action:
         add_snapshots(config)
-
-        if CLIActionChoices.UPDATE in action:
-            pass
         if CLIActionChoices.EXPORT in action:
             export_readme(config)
 
+    if CLIActionChoices.UPDATE in action:
+        migrate(config)
     if CLIActionChoices.SERVE in action:
         run_server(config)
 
