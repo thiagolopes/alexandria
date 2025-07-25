@@ -16,11 +16,13 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+
 class CLIActionChoices(Flag):
     SERVE = auto()
     ADD = auto()
     EXPORT = auto()
     UPDATE = auto()
+
 
 class ProgramDependencyNotFound(Exception):
     pass
@@ -129,7 +131,6 @@ class Config:
 
     def get_choice(self) -> CLIActionChoices:
         action = CLIActionChoices(0)
-
 
         if self.generate_readme is True:
             action |= CLIActionChoices.EXPORT
@@ -535,29 +536,45 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
 class Process:
     required: bool = False
     quiet: bool = False
-    cmd: str
+    cmd: list[str] | str
     default_args: list[str] | None = None
+
+    def __init__(self):
+        self._not_found = False
 
     @property
     def comand(self):
+        cmd = self.cmd_available
         if self.default_args is None:
-            return [self.cmd]
-        return [self.cmd] + self.default_args
+            return [cmd]
+        return [cmd] + self.default_args
 
     @cached_property
-    def available(self):
-        return shutil.which(self.cmd)
+    def cmd_available(self) -> str:
+        cmds = self.cmd
+        if isinstance(cmds, str):
+            cmds = [cmds]
+
+        for cmd in cmds:
+            if shutil.which(cmd):
+                return cmd
+
+        if not self.required:
+            print(f"{self.__class__.__name__} not found, but not required.")
+            self._not_found = True
+            return cmds.pop()
+
+        raise ProgramDependencyNotFound(
+            "{} is required dependency, please install"
+            " it using your package manager".format("/".join(cmds))
+        )
 
     def run(self, cmd, quiet: None | bool = None) -> int:
+        if self._not_found:
+            return 0
+
         if quiet is None:
             quiet = self.quiet
-
-        if not self.available:
-            if self.required:
-                raise ProgramDependencyNotFound(
-                    f"{self.__class__.__name__} is a required dependency, please install it using your package manager"
-                )
-            return 1
 
         stderr = None
         stdout = None
@@ -570,11 +587,13 @@ class Process:
 
 
 class Chromium(Process):
+    required = False
     quiet = True
-    cmd = "chromium"
+    cmd = ["chromium", "chrome"]
 
     def __init__(self, path: Path):
         self.path = path
+        super().__init__()
 
     def screenshot(self, url: URL, dest):
         cmd = self.comand
@@ -601,6 +620,7 @@ class WGet(Process):
     def __init__(self, path: Path, deep=1):
         self.deep = deep
         self.path = path
+        super().__init__()
 
     def add_browser_headers(self, cmd, gzip=False):
         cmd.extend(
@@ -654,6 +674,7 @@ class Git(Process):
     def __init__(self, path: Path):
         self.path = Path(path)
         self.default_args = ["-C", f"{self.path}"]
+        super().__init__()
 
     def is_git_repo(self):
         return (self.path / Path(".git")).is_dir()
@@ -753,7 +774,9 @@ def migrate(config):
         screenshoter.screenshot(snapshot.url, snapshot.screenshot_file())
 
     syncer.add()
-    syncer.commit(f"Migration completed, total: {total} at {datetime.now().isoformat()}")
+    syncer.commit(
+        f"Migration completed, total: {total} at {datetime.now().isoformat()}"
+    )
     print(f"Migrate finished, total downloads: {total}")
 
 
