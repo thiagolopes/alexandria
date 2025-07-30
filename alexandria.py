@@ -194,8 +194,8 @@ class HTMLFile:
         # improve this to clamp the file size with some max_size (100MB+) instead arbitrary 50% file size
         read_bytes = int(self.file_path.stat().st_size * 0.5)  # 50% arbitrary number
 
-        with open(self.file_path, "r") as f:
-            html_cont = f.read(read_bytes)
+        with open(self.file_path, "rb") as f:
+            html_cont = f.read(read_bytes).decode(errors="replace")
 
         if re_match := self.re_find_title.search(html_cont):
             return html.unescape(re_match.groups()[0])
@@ -320,7 +320,7 @@ class NeoDatabase:
         # print("[DATABASE] Saved.")
 
     def load(self):
-        with open(self.database_file, "r") as f:
+        with open(self.database_file, "rb") as f:
             self.data = json.load(f)
         # print("[DATABASE] Load")
 
