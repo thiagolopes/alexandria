@@ -738,6 +738,7 @@ def add_snapshots(config: Config):
     syncer.migrate()
 
     # check if already downloaded
+    new_snapshots = []
     for url in urls:
         if alx.get_snapshot(url):
             print(f"{url} is already in the database snapshots - skiping the download")
@@ -751,12 +752,14 @@ def add_snapshots(config: Config):
         # validate if exists on statisc - success download
         snapshot_static = alx.get_snapshot_statics(snapshot)
         if snapshot_static:
-            syncer.add()
-            syncer.commit(f"New snapshot: {snapshot_static.title}")
             alx.insert_snapshot(snapshot)
+            new_snapshots.append(snapshot_static.title)
 
+    if (new_snapshots):
+        alx.save()
+        syncer.add()
+        syncer.commit(f"New snapshot(s) {len(new_snapshots)}: {'\n\t'.join(new_snapshots)}")
     # syncer.push()
-    alx.save()
 
 
 def migrate(config):
