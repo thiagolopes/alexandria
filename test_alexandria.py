@@ -3,41 +3,21 @@ import tempfile
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from unittest import TestCase
-from unittest.mock import patch
+import unittest
+from unittest.mock import patch, Mock
 
-from alexandria import Config, NeoDatabase
+from pathlib import Path
+
+from alexandria import log
+from alexandria import NeoDatabase
+from alexandria import URL, InvalidURL
+from alexandria import ExternalDependency, ExternalDependencyNotFound, ScreenshotPage
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
 
-# class ConfigTest(TestCase):
-#     def test_config(self):
-#         tmp_path_k = tempfile.TemporaryDirectory("alexandria")
-#         tmp_path_k.cleanup()
-#         tmp_path = tmp_path_k.name
-#         pref = Config(path=tmp_path, _generate_readme)
 
-#         self.assertDictEqual(
-#             asdict(pref),
-#             {
-#                 "path": Path(tmp_path),
-#                 "db_name": "database",
-#                 "db_statics_name": "mirrors",
-#                 "debug": False,
-#                 "generate_readme": True,
-#                 "readme_name": "README.md",
-#                 "server_port": 8000,
-#                 "skip_download": False,
-#             },
-#         )
-#         self.assertEqual(pref.db, Path(f"{tmp_path}/{pref.db_name}"))
-#         self.assertEqual(pref.db_statics, Path(f"{tmp_path}/{pref.db_statics_name}"))
-#         self.assertEqual(pref.skip, False)
-#         self.assertEqual(pref.statics_server, Path("./static"))
-
-
-class DatabaseTest(TestCase):
+class DatabaseTest(unittest.TestCase):
     def setUp(self):
         self.tmp_dir_k = tempfile.TemporaryDirectory("alexandria")
         self.tmp_dir = Path(self.tmp_dir_k.name)
@@ -106,137 +86,107 @@ class DatabaseTest(TestCase):
         self.assertFalse("not-exist" in self.db)
 
 
-# class AlexandriaTestCase:
-#     def setup_db(self, db_path):
-#         with open(db_path, "wb") as f:
-#             f.write(DATABASE_DEFAULT)
+class URLTest(unittest.TestCase):
+    def test_url_not_url(self):
+        with self.assertRaises(InvalidURL) as err:
+            URL("ftp:192.182.0.1")
+        self.assertIn("not HTTP", str(err.exception))
 
-#     def setup_html(self, path):
-#         tmp_html = tempfile.NamedTemporaryFile("w+b", dir=path, suffix=".html", delete=False)
-#         tmp_html.write(bytes(HTML_CONTENT, ENCODE))
-#         html = tmp_html.name.split("/")[-1]
-#         return html
-
-#     @classmethod
-#     def setUpClass(cls):
-#         cls.tmp_path = tempfile.TemporaryDirectory("alexandria")
-#         pref = Config(cls.tmp_path.name, generate_readme=True, debug=False)
-#         pref.db_static.mkdir()
-
-#         cls.pref = pref
-#         cls.html = cls.setup_html(cls, pref.db_static)
-#         cls.setup_db(cls, pref.db)
-
-#         path = cls.tmp_path.name.split("/")[-1]
-#         cls.url = f"http://{path}/{cls.html}"
-
-#     def tearDown(self):
-#         self.tmp_path.cleanup()
+    def test_url_not_valid(self):
+        with self.assertRaises(InvalidURL) as err:
+            URL("192.182.0.1")
+        self.assertIn("not valid URL", str(err.exception))
 
 
-# class TestSanitizers(TestCase):
-#     def test_sanitize_title(self):
-#         title = "Python | language\n"
-#         expected_title = "Python - language"
-#         self.assertEqual(sanitize_title(title), expected_title)
+    def test_url(self):
+        url = URL("https://github.com.br")
 
-#     def test_sanitize_url(self):
-#         url = r"https://test-how-to-do-long-urls.com/whoistoolongurltoshoweverthingint\heview.html"
-#         self.assertEqual(sanitize_url(url), "test-how-to-do-long-urls.com/whoistoolongurlt(...)")
-
-#     def test_sanitize_datetime(self):
-#         today = datetime(1997, 1, 1)
-#         self.assertEqual(sanitize_datetime(today), "01. January 1997 12:00AM")
-
-#     def test_size(self):
-#         sizes = (0,
-#                  1024,
-#                  1024*1024,
-#                  1024*1024*1024,
-#                  1024*1024*8)
-#         sizes_expected = ("0 B", "1.0 KiB", "1.0 MiB", "1.0 GiB", "8.0 MiB")
-#         for size, expected in zip(sizes, sizes_expected):
-#             self.assertEqual(sanitize_size(size), expected)
+        self.assertEqual(url, URL("https://github.com.br"))
+        self.assertEqual(url.__hash__(), URL("https://github.com.br").__hash__())
+        # self.assertEqual(url.unique(), "")
 
 
-# class TestLog(AlexandriaTestCase, TestCase):
-#     def test_border(self):
-#         msg = border("Test msg")
-#         border_msg = ("*" * 25)
-#         expected_msg = border_msg + "\nTest msg\n" + border_msg
+class ExternalDependencyTest(unittest.TestCase):
+    class LS(ExternalDependency):
+        cmd = ["ls"]
+        args = ["-la"]
 
-#         self.assertEqual(msg, expected_msg)
+    @patch("subprocess.run")
+    @patch("shutil.which", lambda _: True)
+    def test_basic_overwrite(self, mock_run):
+        ls = self.LS()
 
-#     @patch("builtins.print")
-#     def test_border_print_no_border(self, mock_print):
-#         msg = debug_print("Test msg", add_border=False)
-#         expected_msg = "[DEBUG] Test msg"
+        ls.run(["-a", "-b", "./"])
+        mock_run.assert_called_with(["ls", "-a", "-b", "./"], check=False, stderr=None, stdout=None)
 
-#         self.assertEqual(msg, expected_msg)
-#         mock_print.assert_not_called()
+    @patch("subprocess.run")
+    @patch("shutil.which", lambda _: True)
+    def test_basic_overwrite_merge(self, mock_run):
+        ls = self.LS()
 
-#     @patch("builtins.print")
-#     def test_border_print_border(self, mock_print):
-#         alx.DEBUG = True
-#         border_msg = ("*" * 25)
-#         msg = debug_print("Test msg", add_border=True)
-#         expected_msg = border_msg + "\n[DEBUG] Test msg\n" + border_msg
+        ls.run(["-a", "-b", "./"], True)
+        mock_run.assert_called_with(["ls", "-la", "-a", "-b", "./"], check=False, stderr=None, stdout=None)
 
-#         self.assertEqual(msg, expected_msg)
-#         mock_print.assert_called_once()
+    @patch("subprocess.run")
+    @patch("shutil.which", lambda _: True)
+    def test_basic_merge(self, mock_run):
+        ls = self.LS()
 
-#     @patch("builtins.print")
-#     def test_title_print(self, mock_print):
-#         title = title_print("Alexandria")
-#         expected_title = "\n" + ("*" * 8) + " Alexandria " + ("*" * 8)
+        ls.run(merge_args=True)
+        mock_run.assert_called_with(["ls", "-la"], check=False, stderr=None, stdout=None)
 
-#         self.assertEqual(title, expected_title)
+    @patch("subprocess.run")
+    @patch("shutil.which", lambda _: True)
+    def test_basic(self, mock_run):
+        ls = self.LS()
 
-# class TestWebpage(AlexandriaTestCase, TestCase):
-#     @patch("builtins.print")
-#     def test_created_new(self, mock_stdout):
-#         alx.DEBUG = True
-#         webpage = Webpage(self.url)
+        ls.run()
+        self.assertEqual(ls.available_cmd(), "ls")
+        mock_run.assert_called_with(["ls", "-la"], check=False, stderr=None, stdout=None)
 
-#         mock_stdout.assert_called_with(f"[DEBUG] [GENERATED] {webpage!r}")
-#         self.assertEqual(webpage.title, "Wikipedia - Python")
-#         self.assertEqual(webpage.url, self.url)
-#         self.assertEqual(webpage.base_path, self.path.name)
-#         self.assertEqual(webpage.full_path, (self.path.name + "/" + self.html))
 
-#     @patch('builtins.print')
-#     def test_was_loaded_from_webpate(self, mock_stdout):
-#         alx.DEBUG = True
-#         expected_date = datetime(1972, 12, 17)
-#         webpage_base = Webpage(self.url, expected_date)
-#         webpage = Webpage.from_webpage(webpage_base)
+    @patch("shutil.which", lambda _: False)
+    def test_available_cmd_not_exists(self):
+        ls = self.LS()
 
-#         mock_stdout.assert_called_with(f"[DEBUG] [RELOADED] {webpage!r}")
-#         self.assertEqual(webpage.created_at, expected_date)
-#         self.assertEqual(webpage, webpage_base)
-#         self.assertNotEqual(id(webpage), id(webpage_base))
+        self.assertIsNone(ls.run())
 
-#     def test_eq(self):
-#         webpage = Webpage(self.url)
-#         webpage_two = Webpage(self.url)
+        ls.raise_not_found = True
+        with self.assertRaises(ExternalDependencyNotFound) as err:
+            ls.run()
+        self.assertEqual("ls is required dependency, please install it using your package manager",
+                         str(err.exception))
 
-#         self.assertEqual(webpage, webpage_two)
 
-#     def test_to_md_line(self):
-#         webpage = Webpage(self.url)
-#         created_at = sanitize_datetime(webpage.created_at)
-#         expected_md = (f"| [Wikipedia - Python]({self.url}) | {(created_at)} |")
+class ScreenshotPageTest(unittest.TestCase):
+    @patch("subprocess.run")
+    @patch("shutil.which", lambda _: True)
+    def test_screenshot(self, mock_run):
+        ss = ScreenshotPage(Path("~/doc"))
+        ss.screenshot("url_test", "output")
 
-#         self.assertEqual(webpage.to_md_line(), expected_md)
+        self.assertTrue(ss.quiet)
+        self.assertEqual(ss.cmd, ["chromium", "chrome"])
 
-#     def test_to_html(self):
-#         webpage = Webpage(self.url)
+        mock_run.assert_called_with(
+            ['chromium',
+             '--run-all-compositor-stages-before-draw',
+             '--disable-gpu',
+             '--headless=new',
+             '--virtual-time-budget=30000',
+             '--hide-scrollbars',
+             '--window-size=1920,4000',
+             '--screenshot=~/doc/output',
+             'url_test'],
+            check=False,
+            stderr=-3,
+            stdout=-3
+        )
 
-#         self.assertIn("<tr>", webpage.to_html())
-#         self.assertIn(self.html, webpage.to_html())
-#         self.assertIn(webpage.title, webpage.to_html())
-#         self.assertIn("</tr>", webpage.to_html())
 
-#     def test_calculate_size_disk(self):
-#         webpage = Webpage(self.url)
-#         self.assertEqual(webpage.calculate_size_disk(self.path.name), len(bytes(HTML_CONTENT, ENCODE)))
+# TODO Wget
+# TODO Git
+
+
+if __name__ == "__main__":
+    unittest.main()

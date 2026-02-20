@@ -16,15 +16,10 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+# TODO proper logging
+log = print
 
-class CLIActionChoices(Flag):
-    SERVE = auto()
-    ADD = auto()
-    EXPORT = auto()
-    UPDATE = auto()
-
-
-class ProgramDependencyNotFound(Exception):
+class ExternalDependencyNotFound(Exception):
     pass
 
 
@@ -51,7 +46,7 @@ class URL:
         url_p = urlparse(url)
 
         if not url_p.scheme and not url_p.netloc:
-            raise InvalidURL(f"{url} is not a valid URL")
+            raise InvalidURL(f"{url} is not valid URL")
 
         if url_p.scheme not in ["", "https", "http"]:
             raise InvalidURL(f"{url} is not HTTP or HTTPS")
@@ -75,73 +70,6 @@ class URL:
 
     def unique(self):
         return md5(str(self.original_url).encode("utf-8")).hexdigest()
-
-
-@dataclass(kw_only=True)
-class Config:
-    path: Path = Path("alx")
-    migrate: bool = False
-    generate_readme: bool = False
-    readme_file_name: str = "README.md"
-
-    debug: bool = False
-    server_port: int = 8000
-
-    urls: list[Path] = field(default_factory=list)
-    download_deep: int = 1
-
-    db_name: str = "database.json"
-    _db_statics_name: str = "mirrors"
-
-    def __post_init__(self):
-        self.path = Path(self.path)
-        for i, url in enumerate(self.urls):
-            self.urls[i] = URL(url)
-
-    @property
-    def db(self) -> Path:
-        return (self.path / self.db_name).absolute()
-
-    @property
-    def db_statics(self) -> Path:
-        return (self.path / self._db_statics_name).absolute()
-
-    @property
-    def screenshots_path(self) -> Path:
-        return (self.path / "screenshots").absolute()
-
-    @property
-    def readme(self) -> Path:
-        return (self.path / self.readme_file_name).absolute()
-
-    @classmethod
-    def from_args_parse(cls, parser):
-        args = parser.parse_args()
-        return cls(
-            path=args.directory,
-            urls=args.urls,
-            generate_readme=args.readme,
-            readme_file_name=args.readme_file_name,
-            server_port=args.port,
-            debug=args.verbose,
-            download_deep=args.download_deep,
-            migrate=args.migrate,
-            db_name=args.database_name,
-        )
-
-    def get_choice(self) -> CLIActionChoices:
-        action = CLIActionChoices(0)
-
-        if self.generate_readme is True:
-            action |= CLIActionChoices.EXPORT
-
-        if self.urls:
-            action |= CLIActionChoices.ADD
-        elif self.migrate is True:
-            action |= CLIActionChoices.UPDATE
-        else:
-            action |= CLIActionChoices.SERVE
-        return action
 
 
 class StaticsFiles:
@@ -533,184 +461,151 @@ class AlexandriaStaticServer(SimpleHTTPRequestHandler):
         return super().do_GET()
 
 
-class Process:
-    required: bool = False
+class ExternalDependency:
+    # TODO raise_on_error: bool = False
+    raise_not_found: bool = False
+
     quiet: bool = False
-    cmd: list[str] | str
-    default_args: list[str] | None = None
+    cmd: list[str]
+    args: list[str] | None = None
 
-    def __init__(self):
-        self._not_found = False
-
-    @property
-    def comand(self):
-        cmd = self.cmd_available
-        if self.default_args is None:
-            return [cmd]
-        return [cmd] + self.default_args
-
-    @cached_property
-    def cmd_available(self) -> str:
-        cmds = self.cmd
-        if isinstance(cmds, str):
-            cmds = [cmds]
-
-        for cmd in cmds:
+    def available_cmd(self) -> str:
+        for cmd in self.cmd:
             if shutil.which(cmd):
                 return cmd
+            # TODO log not found
 
-        if not self.required:
-            print(f"{self.__class__.__name__} not found, but not required.")
-            self._not_found = True
-            return cmds.pop()
-
-        raise ProgramDependencyNotFound(
+        raise ExternalDependencyNotFound(
             "{} is required dependency, please install"
-            " it using your package manager".format("/".join(cmds))
+            " it using your package manager".format("/".join(self.cmd))
         )
 
-    def run(self, cmd, quiet: None | bool = None) -> int:
-        if self._not_found:
-            return 0
-
-        if quiet is None:
-            quiet = self.quiet
+    def run(
+        self,
+        overwrite_args: list[str] | None = None,
+        merge_args: bool = False
+    ) -> CompletedProcess | None:
+        try:
+            cmd = self.available_cmd()
+        except ExternalDependencyNotFound as err:
+            if self.raise_not_found:
+                raise err
+            log(f"External program not found - {self.cmd}")
+            return None
 
         stderr = None
         stdout = None
-        if quiet:
+        if self.quiet:
             stderr = subprocess.DEVNULL
             stdout = subprocess.DEVNULL
-        return subprocess.run(
-            cmd, check=False, stderr=stderr, stdout=stdout
-        ).check_returncode
 
+        args = self.args
+        if overwrite_args:
+            if merge_args:
+                args.extend(overwrite_args)
+            else:
+                args = overwrite_args
 
-class Chromium(Process):
-    required = False
+        return subprocess.run([cmd] + args, check=False, stderr=stderr, stdout=stdout)
+
+class ScreenshotPage(ExternalDependency):
     quiet = True
     cmd = ["chromium", "chrome"]
+    args = [
+            "--run-all-compositor-stages-before-draw",
+            "--disable-gpu",
+            "--headless=new",
+            "--virtual-time-budget=30000",
+            "--hide-scrollbars",
+            "--window-size=1920,4000",
+    ]
 
     def __init__(self, path: Path):
         self.path = path
-        super().__init__()
 
     def screenshot(self, url: URL, dest):
-        cmd = self.comand
-        cmd.extend(
-            [
-                "--run-all-compositor-stages-before-draw",
-                "--disable-gpu",
-                "--headless=new",
-                "--virtual-time-budget=30000",
-                "--hide-scrollbars",
-                "--window-size=1920,4000",
-            ]
-        )
-        cmd.append(f"--screenshot={self.path / dest}")
-        cmd.append(str(url))
-
-        return self.run(cmd)
+        args_screenshot = self.args.copy()
+        args_screenshot.append(f"--screenshot={self.path / dest}")
+        args_screenshot.append(str(url))
+        return self.run(args_screenshot)
 
 
-class WGet(Process):
+class WGet(ExternalDependency):
     required = True
     cmd = "wget"
+    args = [
+        "--header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "--header", "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)",
+        "--header", "Accept: text/html,application/xhtml+xml",
+        "--header", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        "--header", "DNT: 1",
+        "--header", "Connection: keep-alive",
+        "--header", "Upgrade-Insecure-Requests: 1",
+        "--header", "Sec-Fetch-Dest: document",
+        "--header", "Sec-Fetch-Mode: navigate",
+        "--header", "Sec-Fetch-Site: none",
+        "--header", "Sec-Fetch-User: ?1",
+        "--header", "Cache-Control: max-age=0",
+        "--mirror",
+        "-p",
+        "--recursive",
+        "--page-requisites",
+        "--adjust-extension",
+        "--span-hosts",
+        "-U", "'Mozilla'",
+        "-E",
+        "-k",
+        "-e", "robots=off", "--random-wait", "--no-cookies",
+        "--convert-links", "--restrict-file-names=windows",
+    ]
 
-    def __init__(self, path: Path, deep=1):
-        self.deep = deep
-        self.path = path
-        super().__init__()
-
-    def add_browser_headers(self, cmd, gzip=False):
-        cmd.extend(
-            [
-                "--header",
-                "Accept: text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            ]
-        )
-        cmd.extend(
-            [
-                "--header",
-                "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)",
-            ]
-        )
-        cmd.extend(["--header", "Accept: text/html,application/xhtml+xml"])
-        cmd.extend(["--header", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8"])
-        cmd.extend(["--header", "DNT: 1"])
-        cmd.extend(["--header", "Connection: keep-alive"])
-        cmd.extend(["--header", "Upgrade-Insecure-Requests: 1"])
-        cmd.extend(["--header", "Sec-Fetch-Dest: document"])
-        cmd.extend(["--header", "Sec-Fetch-Mode: navigate"])
-        cmd.extend(["--header", "Sec-Fetch-Site: none"])
-        cmd.extend(["--header", "Sec-Fetch-User: ?1"])
-        cmd.extend(["--header", "Cache-Control: max-age=0"])
+    def __init__(self, path: Path, deep=1, gzip=False):
+        args.extend(["-l", str(deep)])
+        args.extend(["-P", str(path)])
         if gzip:
-            cmd.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
+            args.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
 
-    def fetch_site(self, url: URL):
-        cmd = self.comand
-
-        self.add_browser_headers(cmd)
-        cmd.extend(["-P", str(self.path)])
-        cmd.extend(["--mirror", "-p", "--recursive"])
-        cmd.extend(["-l", str(self.deep)])
-        cmd.extend(["--page-requisites", "--adjust-extension", "--span-hosts"])
-        cmd.extend(["-U", "'Mozilla'", "-E", "-k"])
-        cmd.extend(["-e", "robots=off", "--random-wait", "--no-cookies"])
-        cmd.extend(["--convert-links", "--restrict-file-names=windows"])
-        cmd.extend(["--domains", url.netloc])
-        cmd.extend(["--no-parent", str(url)])
-
-        return self.run(cmd)
+    def download(self, url: URL):
+        args_download = args.copy()
+        args_download.extend(["--no-parent", str(url)])
+        args_download.extend(["--domains", url.netloc])
+        return self.run(args_download)
 
 
-class Git(Process):
-    required = False
-    cmd = "git"
+class Git(ExternalDependency):
+    raise_not_found = False
     quiet = False
 
-    def __init__(self, path: Path):
+    cmd = ["git"]
+    args = ["-C",]
+
+    def __init__(self, path: Path, init=True):
         self.path = Path(path)
-        self.default_args = ["-C", f"{self.path}"]
-        super().__init__()
+        self.args.append(str(path))
+
+        if init and not self.is_git_repo():
+            self.init()
 
     def is_git_repo(self):
         return (self.path / Path(".git")).is_dir()
 
     def get_head(self):
-        cmd = self.comand
-        cmd.extend(["symbolic-ref", "--short", "HEAD"])
-        return self.run(cmd)
+        return self.run(["symbolic-ref", "--short", "HEAD"], True)
 
     def get_origin(self):
-        cmd = self.comand
-        cmd.extend(["remote"])
-        return self.run(cmd)
+        return self.run(["remote"], True)
 
-    def init_repo(self):
-        cmd = self.comand
-        cmd.extend(["init"])
-        return self.run(cmd)
+    def init(self):
+        return self.run(["init"], True)
 
     def push(self):
         pass
 
     def commit(self, message):
-        cmd = self.comand
-        cmd.extend(["commit", "-m", message])
-        return self.run(cmd)
+        return self.run(["commit", "-m", message], True)
 
-    def add(self, file="."):
-        cmd = self.comand
-        cmd.extend(["add", file])
-        return self.run(cmd)
-
-    def migrate(self):
-        if not self.is_git_repo():
-            self.init_repo()
-
+    def add(self, _file="."):
+        return self.run(["add", _file], True)
 
 def run_server(config: Config, server=HTTPServer, handler=AlexandriaStaticServer):
     # shell_link_mask = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
@@ -791,85 +686,52 @@ def export_readme(config):
 
 
 def main():
-    print("Αλεξάνδρεια/Alexandria/الإسكندرية - Internet preservation")
     parser = argparse.ArgumentParser(
-        prog="Alexandria",
-        description="A tool to manage your personal website backup libary",
+        prog="Alexandria - Internet preservation",
+        description="Download websites",
         epilog="Keep and hold",
     )
-    parser.add_argument(
-        "urls", help="One or a list of URLs to snapshot websites", nargs="*"
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        help="The port to run server, 8000 is default",
-        default=Config.server_port,
-        type=int,
-    )
-    parser.add_argument(
-        "--download-deep",
-        help="How deep in links should download",
-        default=Config.download_deep,
-        type=int,
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        help="Enable verbose",
-        default=Config.debug,
-        type=bool,
-    )
-    parser.add_argument(
-        "--quiet",
-        help="Silencie the webserver logs.",
-        default=True,
-        action=argparse.BooleanOptionalAction,
-        type=bool,
-    )
-    parser.add_argument(
-        "--migrate",
-        default=Config.migrate,
-        help="Re-download all assets",
-        action=argparse.BooleanOptionalAction,
-        type=bool,
-    )
-    parser.add_argument(
-        "--readme",
-        help="Generate the database README.",
-        default=Config.generate_readme,
-        type=bool,
-    )
-    parser.add_argument(
-        "--readme-file-name",
-        help="Name to use in README generation.",
-        default=Config.readme_file_name,
-        type=str,
-    )
-    parser.add_argument(
-        "--directory",
-        help="Path to store database and statics to serve.",
-        default=Config.path,
-        type=Path,
-    )
-    parser.add_argument(
-        "--database-name",
-        help="Name of database file (JSON).",
-        default=Config.db_name,
-        type=str,
-    )
-    config = Config.from_args_parse(parser)
 
-    action = config.get_choice()
-    if CLIActionChoices.ADD in action:
-        add_snapshots(config)
-        if CLIActionChoices.EXPORT in action:
-            export_readme(config)
+    parser.add_argument("urls", help="One or multiple URLs to backup", nargs="*")
+    parser.add_argument("--generate-readme", help="Generate and exist", default=True, type=bool)
+    parser.add_argument("--generate-html", help="Generate and exist", default=True, type=bool)
 
-    if CLIActionChoices.UPDATE in action:
-        migrate(config)
-    if CLIActionChoices.SERVE in action:
-        run_server(config)
+    parser.add_argument("-p", "--port", help="Server HTTP port", default=8000, type=int)
+    parser.add_argument("-v", "--verbose", help="Enable verbose", default=True, type=bool)
+    parser.add_argument("--deep", help="How deep should download", default=1, type=int)
+    parser.add_argument("--readme", help="Generate the database README.", default="README.md", type=bool)
+    parser.add_argument("--database", help="Path to database file.", default="database.json", type=str)
+    parser.add_argument("--statics", help="Path to statics.", default=".alx/", type=Path)
+
+
+    args_parser = parser.parse_args()
+    if args_parser.generate_readme:
+        pass
+        # generate...
+    if args_parser.generate_html:
+        pass
+        # generate...
+
+    # or server or download
+    if args_parser.urls:
+        for url in urls:
+            pass
+            # download
+        # catch keyboard exit
+    elif args_parser.serve:
+        pass
+        # serve
+        # catch keyboard exit
+
+    # if CLIActionChoices.ADD in action:
+    #     add_snapshots(config)
+    #     if CLIActionChoices.EXPORT in action:
+    #         export_readme(config)
+
+    # if CLIActionChoices.UPDATE in action:
+    #     migrate(config)
+    # if CLIActionChoices.SERVE in action:
+    #     run_server(config)
 
     print("Αντίο/bye/مع السلامة!")
 
