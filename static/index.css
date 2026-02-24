@@ -96,6 +96,7 @@ table {
   border-collapse: collapse;
   font-family: sans-serif;
   font-weight: 400;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 th {
   padding: 0.5rem;
@@ -138,4 +139,24 @@ path {
 }
 span {
     font-style: normal;
+}
+
+.box_span {
+    border-width: 2px;
+    border-color: rgba(159, 228, 196, 0.5);
+    border-style: dashed;
+    width: 100%;
+    border-collapse: collapse;
+    font-family: sans-serif;
+    font-weight: 400;
+    padding: 1rem;
+    background: rgba(159, 228, 196, 0.5);
+    color: rgb(35, 63, 51);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.header_row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
 }
