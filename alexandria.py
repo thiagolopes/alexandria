@@ -21,13 +21,13 @@ from urllib.parse import urlparse
 # from typing import Literal
 
 
-logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("alexandria")
 
 SHELL_LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
 
 
-class ExternalDependencyNotFound(Exception):
+class ExternalExecutableNotFound(Exception):
     pass
 
 
@@ -35,66 +35,31 @@ class StaticNotFound(Exception):
     pass
 
 
-class InvalidURL(Exception):
+class URLInvalid(Exception):
     pass
 
 
-class ExternalDependency:
-    # TODO raise_on_error: bool = False
-    raise_not_found: bool = False
-
-    quiet: bool = False
-    cmd: list[str]
-    args: list[str] | None = None
-
-    def available_cmd(self) -> str:
-        if isinstance(self.cmd, str):
-            return self.cmd
-
-        for cmd in self.cmd:
-            if shutil.which(cmd):
-                return cmd
-            # TODO log not found
-
-        raise ExternalDependencyNotFound(
-            "{} is required dependency, please install"
-            " it using your package manager".format("/".join(self.cmd))
-        )
-
-    def run(
-        self,
-        overwrite_args: list[str] | None = None,
-        merge_args: bool = False
-    ) -> subprocess.CompletedProcess | None:
-        try:
-            cmd = self.available_cmd()
-        except ExternalDependencyNotFound as err:
-            if self.raise_not_found:
-                raise err
-            logger.info(f"External program not found - {self.cmd}")
-            return None
-
-        stderr = None
-        stdout = None
-        if self.quiet:
-            stderr = subprocess.DEVNULL
-            stdout = subprocess.DEVNULL
-
-        args = self.args
-        if overwrite_args:
-            if merge_args:
-                args.extend(overwrite_args)
-            else:
-                args = overwrite_args
-
-        complete_cmd = [cmd] + args
-        logger.info(f"External running: {complete_cmd}")
-        return subprocess.run(complete_cmd, check=False, stderr=stderr, stdout=stdout)
+def find_executable(cmds: list[str]) -> str | None:
+    for cmd in cmds:
+        if shutil.which(cmd):
+            return cmd
+    return None
 
 
-class Chrome(ExternalDependency):
-    quiet = True
-    cmd = ["chromium", "chrome"]
+def run_command(cmd: str, args: list[str], quiet: bool = False) -> subprocess.CompletedProcess:
+    stderr = subprocess.DEVNULL if quiet else None
+    stdout = subprocess.DEVNULL if quiet else None
+    full_cmd = [cmd] + args
+    logger.info(f"Running command: {full_cmd}")
+    return subprocess.run(full_cmd, check=False, stderr=stderr, stdout=stdout)
+
+
+def chrome_screenshot(url: URL, output_path: Path):
+    cmd = find_executable(["chromium", "chrome"])
+    if cmd is None:
+        return None
+
+    screenshot_dest = output_path / Path(url.unique() + '.png')
     args = [
             "--run-all-compositor-stages-before-draw",
             "--disable-gpu",
@@ -102,23 +67,17 @@ class Chrome(ExternalDependency):
             "--virtual-time-budget=30000",
             "--hide-scrollbars",
             "--window-size=1920,4000",
+            f"--screenshot={screenshot_dest}",
+            str(url),
     ]
-
-    def __init__(self, path: Path):
-        self.path = path
-
-    def screenshot(self, url: URL, file_name):
-        screenshot_dest = self.path / Path(file_name + '.png')
-
-        args_screenshot = self.args.copy()
-        args_screenshot.append(f"--screenshot={screenshot_dest}")
-        args_screenshot.append(str(url))
-        return self.run(args_screenshot)
+    return run_command(cmd, args, quiet=True)
 
 
-class WGet(ExternalDependency):
-    required = True
-    cmd = "wget"
+def wget_download_page(url: URL, output_path: Path, deep: int = 1, gzip: bool = False):
+    cmd = find_executable(["wget"])
+    if cmd is None:
+        raise ExternalExecutableNotFound("wget is required dependency")
+
     args = [
         "--header", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "--header", "User-Agent: Mozilla/5.0 (compatible; Heritrix/3.0 +http://archive.org)",
@@ -143,56 +102,37 @@ class WGet(ExternalDependency):
         "-k",
         "-e", "robots=off", "--random-wait", "--no-cookies",
         "--convert-links", "--restrict-file-names=windows",
+        "-l", str(deep),
+        "-P", str(output_path),
+        "--no-parent", str(url),
+        "--domains", url.netloc,
     ]
+    if gzip:
+        args.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
 
-    def __init__(self, path: Path, deep=1, gzip=False):
-        self.args.extend(["-l", str(deep)])
-        self.args.extend(["-P", str(path)])
-        if gzip:
-            self.args.extend(["--header", "Accept-Encoding: gzip, deflate, br"])
+    return run_command(cmd, args, quiet=False)
 
-    def download(self, url: URL):
-        args_download = self.args.copy()
-        args_download.extend(["--no-parent", str(url)])
-        args_download.extend(["--domains", url.netloc])
-        return self.run(args_download)
-
-
-class Git(ExternalDependency):
-    raise_not_found = False
-    quiet = False
-
-    cmd = ["git"]
-    args = ["-C",]
-
-    def __init__(self, path: Path, init=True):
-        self.path = Path(path)
-        self.args.append(str(path))
-
-        if init and not self.is_git_repo():
-            self.init()
-
-    def is_git_repo(self):
-        return (self.path / Path(".git")).is_dir()
-
-    def get_head(self):
-        return self.run(["symbolic-ref", "--short", "HEAD"], True)
-
-    def get_origin(self):
-        return self.run(["remote"], True)
-
-    def init(self):
-        return self.run(["init"], True)
-
-    def push(self):
-        pass
-
-    def commit(self, message):
-        return self.run(["commit", "-m", message], True)
-
-    def add(self, _file="."):
-        return self.run(["add", _file], True)
-
+# class Git(ExternalDependency):
+#     quiet = True
+#     cmd = ["git"]
+#     def __init__(self, path, init=True):
+#         self.path = Path(path)
+#         self.args = ["-C", str(self.path)]
+#         if init and not self.is_git_repo:
+#             self.run(["init"], True)
+#     @property
+#     def is_git_repo(self):
+#         return (self.path / Path(".git")).is_dir()
+#     def get_head(self):
+#         return self.run(["symbolic-ref", "--short", "HEAD"], True)
+#     def get_origin(self):
+#         return self.run(["remote"], True)
+#     def push(self):
+#         pass
+#     def commit(self, message):
+#         return self.run(["commit", "-m", message], True)
+#     def add(self, stages="."):
+#         return self.run(["add", stages], True)
 
 @dataclass(init=False)
 class URL:
@@ -209,10 +149,10 @@ class URL:
         url_p = urlparse(url)
 
         if not url_p.scheme and not url_p.netloc:
-            raise InvalidURL(f"{url} is not valid URL")
+            raise URLInvalid(f"{url} is not valid URL")
 
         if url_p.scheme not in ["", "https", "http"]:
-            raise InvalidURL(f"{url} is not HTTP or HTTPS")
+            raise URLInvalid(f"{url} is not HTTP or HTTPS")
 
         self.original_url = url
         self.scheme = url_p.scheme
@@ -235,7 +175,6 @@ class URL:
         return md5(str(self.original_url).encode("utf-8")).hexdigest()
 
 
-@cache
 class HTMLParser:
     # this only parses basic tags, do not use as AST analizer
     # using HTMLParser from html.parser shows slower, maybe later.
@@ -283,12 +222,26 @@ class Website:
 
 
 class StaticFiles:
-    def __init__(self, path):
-        self.path = Path(path).absolute()
-        self.path.mkdir(exist_ok=True, parents=True)
+    def __init__(self, root):
+        self.root = Path(root).absolute()
+        self.root.mkdir(exist_ok=True, parents=True)
 
+    @cache
+    def directory_size(self, path) -> int:
+        total = 0
+        for e in path.iterdir():
+            if e.is_dir():
+                total += self.directory_size(e)
+            if e.is_file():
+                total += e.stat().st_size
+        return total
+
+    def size(self):
+        return self.directory_size(self.root)
+
+class WebsiteStaticFiles(StaticFiles):
     def find_html_index(self, url: URL) -> Path:
-        path = self.path / Path(f"{url.netloc}/{url.path}")
+        path = self.root / Path(f"{url.netloc}/{url.path}")
         possibles_files = [
             path,
             path / "index.html",
@@ -313,24 +266,19 @@ class StaticFiles:
             )
         )
 
-    @cache
-    def directory_size(self, path: Path) -> int:
-        total = 0
-        for e in path.iterdir():
-            if e.is_dir():
-                total += self.directory_size(e)
-            if e.is_file():
-                total += e.stat().st_size
-        return total
-
     def size_domain_url(self, url: URL) -> int:
-        path = self.path / url.netloc
+        path = self.root / url.netloc
         if not path.exists():
             return 0
         return self.directory_size(path)
 
 
-class Exporter:
+class ScreenshotsStaticFiles(StaticFiles):
+    def find_screenshot(self, url: URL):
+        return self.root / f"{url.unique()}.png"
+
+
+class Humanizer:
     def clean_title(self, title):
         return title.replace("|", "-").replace("\n", "")
 
@@ -363,33 +311,39 @@ class Exporter:
 
 
 def main(args):
-    if args.verbose:
+    if args.quiet:
         logger.setLevel(logging.INFO)
     logger.info("Alexandria - Internet preservation")
 
-    exporter = Exporter()
-    static_files = StaticFiles(args.files)
+    humanizer = Humanizer()
+    website_sf = WebsiteStaticFiles(args.files)
+    screenshot_sf = ScreenshotsStaticFiles(args.screenshots)
 
-    downloader = WGet(args.files)
-    screenshoter = Chrome(args.screenshots)
+    # Database
+    if args.database.exists():
+        with open(args.database, "r") as f:
+            db = json.load(f)
+    else:
+        db = {}
+    logger.info(f"Loaded file {args.database}")
 
-    ## Load websites
-    with open(args.database, "rb") as f:
-        db = json.load(f)
+    # Load Websites
+    if "websites" not in db:
+        db["websites"] = []
 
     websites = [
         Website(url = web["url"], created_at = web["created_at"])
         for web in db["websites"]
     ]
-    websites.reverse()
-    logger.info(f"Loaded {args.database}: total websites {len(websites)}")
+    websites.sort(key=lambda web: web.created_at, reverse=True)
+    unique_domains = set(web.url.netloc for web in websites)
+    logger.info(f"Total websites {len(websites)} - Total unique domains {len(unique_domains)}")
 
     # Generate README
     with open(args.readme, "w") as f:
-        logger.info(f"Generating {args.readme}...")
-        today = exporter.datetime(datetime.now())
+        today = humanizer.datetime(datetime.now())
         itens_content = "\n".join(
-            "| [{url}]({url}) | {time} |".format(url=web.url, time=exporter.datetime(web.created_at))
+            "| [{url}]({url}) | {time} |".format(url=web.url, time=humanizer.datetime(web.created_at))
             for web in websites
         )
         content = (
@@ -399,61 +353,61 @@ def main(args):
             f"{itens_content}\n"
         )
         f.write(str(content))
-        logger.info(f"{args.readme} generated.")
+        logger.info(f"README as generated at: {args.readme}.")
 
 
     # Generate HTML
     HTML_CONTENT = None
     with open(args.index, "w") as f:
-        with open("static/index.css") as fcss:
-            css = fcss.read()
-        with open("static/index.html") as fhtml:
-            html_base = fhtml.read()
+        with open("template.html", "r", encoding='utf-8') as t:
+            html_template = t.read()
 
-        unique_domains = set([
-            web.url.netloc
-            for web in websites
-        ])
         # <td><span><a href="{snapshot.screenshot}">&#x1F4F7;</a></span></td>
         table_line = """
         <tr>
-            <td><a href="{url}">{url}</a></td>
-            <td>{size}</td>
-            <td>{created_at}</td>
+         <td><a href="{url}">{url}</a></td>
+         <td>{size}</td>
+         <td>{created_at}</td>
         </tr>"""
-        table = """<table>
-            <tr>
-            <th>URL</th>
-            <th>Size</th>
-            <th>Created at</th>
-            </tr>\n"""
-        table_content = table + " ".join(table_line.format(
-            url=web.url,
-            size=exporter.size(static_files.size_domain_url(web.url)),
-            created_at=exporter.datetime(web.created_at)
-        ) for web in websites)
-        content = html_base.format(
-            css=css,
+        table = """
+        <table>
+         <tr>
+           <th>URL</th>
+           <th>Size</th>
+           <th>Created at</th>
+         </tr>
+          {content}
+         </table>
+        """
+        table_content = table.format(
+            content = " ".join(table_line.format(
+                url=web.url,
+                size=humanizer.size(website_sf.size_domain_url(web.url)),
+                created_at=humanizer.datetime(web.created_at)
+            ) for web in websites)
+        )
+        content = html_template.format(
             table=table_content,
-            unique_domains=len(unique_domains),
+            total_unique_domains=len(unique_domains),
             total=len(websites),
-            total_size=exporter.size(
-                static_files.directory_size(args.files) + static_files.directory_size(args.screenshots)
+            total_size=humanizer.size(
+                website_sf.size() + screenshot_sf.size()
             ),
         )
         f.write(str(content))
         HTML_CONTENT = content
+        logger.info(f"HTML as generated at: {args.index}.")
 
     # Download
     if args.urls:
         for url in args.urls:
             new_website = Website(url = url)
             if new_website in websites:
-                 logger.critical(f"{url} is already in the database - skiping this download")
+                 logger.warning(f"{url} is already in the database - skiping this download")
                  continue
 
-            downloader.download(new_website.url)
-            screenshoter.screenshot(new_website.url, new_website.url.unique())
+            wget_download_page(new_website.url, args.files)
+            chrome_screenshot(new_website.url, args.screenshots)
             if static_files.find_html_index(new_website.url): # if index has found - it means success, remove to enable "link only" type
                 db["websites"].append(new_website.json())
 
@@ -494,7 +448,7 @@ if __name__ == "__main__":
     argsparser.add_argument("urls", help="One or multiple URLs to preserve", nargs="*")
 
     argsparser.add_argument("-p", "--port", help="Server HTTP port", default=8000, type=int)
-    argsparser.add_argument("-v", "--verbose", help="Enable verbose", action='store_false')
+    argsparser.add_argument("-q", "--quiet", help="Keep quiet", action='store_false')
     argsparser.add_argument("--deep", help="How deep should download", default=1, type=int)
 
     argsparser.add_argument("--index", help="Where generate HTML index.", default="./alx/index.html", type=Path)

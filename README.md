@@ -1,7 +1,7 @@
 # Alexandria
 Create your personal backup from Internet
 
-![image](https://github.com/thiagolopes/alexandria/assets/5994972/642f4c31-8253-46ef-bcd7-d347c6cee742)
+![image](https://github.com/user-attachments/assets/5afc597c-d3e4-48f0-a258-5dd5ff2d014a)
 
 ## How to install
 ```

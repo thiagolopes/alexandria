@@ -1,0 +1,6 @@
+ipdb==0.13.13
+ipython==9.10.0
+isort==8.0.0
+mypy==1.19.1
+pyflakes==3.4.0
+tox==4.46.0
