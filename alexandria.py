@@ -408,7 +408,7 @@ def main(args):
 
             wget_download_page(new_website.url, args.files)
             chrome_screenshot(new_website.url, args.screenshots)
-            if static_files.find_html_index(new_website.url): # if index has found - it means success, remove to enable "link only" type
+            if website_sf.find_html_index(new_website.url): # if index has found - it means success, remove to enable "link only" type
                 db["websites"].append(new_website.json())
 
         with open(args.database, "w") as f:
