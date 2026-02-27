@@ -394,7 +394,7 @@ def main(args):
                 website_sf.size() + screenshot_sf.size()
             ),
         )
-        f.write(str(content))
+        f.write(content)
         HTML_CONTENT = content
         logger.info(f"HTML as generated at: {args.index}.")
 
