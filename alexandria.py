@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 # from typing import Literal
 
 
-logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("alexandria")
 
 SHELL_LINK_MASK = "\u001b]8;;{}\u001b\\{}\u001b]8;;\u001b\\"
@@ -59,16 +59,16 @@ def chrome_screenshot(url: URL, output_path: Path):
     if cmd is None:
         return None
 
-    screenshot_dest = output_path / Path(url.unique() + '.png')
+    screenshot_dest = output_path / Path(url.unique() + ".png")
     args = [
-            "--run-all-compositor-stages-before-draw",
-            "--disable-gpu",
-            "--headless=new",
-            "--virtual-time-budget=30000",
-            "--hide-scrollbars",
-            "--window-size=1920,4000",
-            f"--screenshot={screenshot_dest}",
-            str(url),
+        "--run-all-compositor-stages-before-draw",
+        "--disable-gpu",
+        "--headless=new",
+        "--virtual-time-budget=30000",
+        "--hide-scrollbars",
+        "--window-size=1920,4000",
+        f"--screenshot={screenshot_dest}",
+        str(url),
     ]
     return run_command(cmd, args, quiet=True)
 
@@ -112,6 +112,7 @@ def wget_download_page(url: URL, output_path: Path, deep: int = 1, gzip: bool = 
 
     return run_command(cmd, args, quiet=False)
 
+
 # class Git(ExternalDependency):
 #     quiet = True
 #     cmd = ["git"]
@@ -133,6 +134,7 @@ def wget_download_page(url: URL, output_path: Path, deep: int = 1, gzip: bool = 
 #         return self.run(["commit", "-m", message], True)
 #     def add(self, stages="."):
 #         return self.run(["add", stages], True)
+
 
 @dataclass(init=False)
 class URL:
@@ -178,9 +180,7 @@ class URL:
 class HTMLParser:
     # this only parses basic tags, do not use as AST analizer
     # using HTMLParser from html.parser shows slower, maybe later.
-    re_find_title = re.compile(
-        r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL
-    )
+    re_find_title = re.compile(r"<title.*?>(.+?)</title>", flags=re.IGNORECASE | re.DOTALL)
 
     def __init__(self, file_path: Path):
         self.file_path = file_path
@@ -200,7 +200,7 @@ class HTMLParser:
 @dataclass(kw_only=True)
 class Website:
     url: URL
-    created_at: datetime = field(default_factory=datetime.now) ## TODO rename "at"
+    created_at: datetime = field(default_factory=datetime.now)  ## TODO rename "at"
 
     # status: Literal["ON_DISK", "LINK_ONLY"] | None = None
 
@@ -238,6 +238,7 @@ class StaticFiles:
 
     def size(self):
         return self.directory_size(self.root)
+
 
 class WebsiteStaticFiles(StaticFiles):
     def find_html_index(self, url: URL) -> Path:
@@ -331,10 +332,7 @@ def main(args):
     if "websites" not in db:
         db["websites"] = []
 
-    websites = [
-        Website(url = web["url"], created_at = web["created_at"])
-        for web in db["websites"]
-    ]
+    websites = [Website(url=web["url"], created_at=web["created_at"]) for web in db["websites"]]
     websites.sort(key=lambda web: web.created_at, reverse=True)
     unique_domains = set(web.url.netloc for web in websites)
     logger.info(f"Total websites {len(websites)} - Total unique domains {len(unique_domains)}")
@@ -355,11 +353,10 @@ def main(args):
         f.write(str(content))
         logger.info(f"README as generated at: {args.readme}.")
 
-
     # Generate HTML
     HTML_CONTENT = None
     with open(args.index, "w") as f:
-        with open("template.html", "r", encoding='utf-8') as t:
+        with open("template.html", "r", encoding="utf-8") as t:
             html_template = t.read()
 
         # <td><span><a href="{snapshot.screenshot}">&#x1F4F7;</a></span></td>
@@ -380,19 +377,20 @@ def main(args):
          </table>
         """
         table_content = table.format(
-            content = " ".join(table_line.format(
-                url=web.url,
-                size=humanizer.size(website_sf.size_domain_url(web.url)),
-                created_at=humanizer.datetime(web.created_at)
-            ) for web in websites)
+            content=" ".join(
+                table_line.format(
+                    url=web.url,
+                    size=humanizer.size(website_sf.size_domain_url(web.url)),
+                    created_at=humanizer.datetime(web.created_at),
+                )
+                for web in websites
+            )
         )
         content = html_template.format(
             table=table_content,
             total_unique_domains=len(unique_domains),
             total=len(websites),
-            total_size=humanizer.size(
-                website_sf.size() + screenshot_sf.size()
-            ),
+            total_size=humanizer.size(website_sf.size() + screenshot_sf.size()),
         )
         f.write(content)
         HTML_CONTENT = content
@@ -401,10 +399,10 @@ def main(args):
     # Download
     if args.urls:
         for url in args.urls:
-            new_website = Website(url = url)
+            new_website = Website(url=url)
             if new_website in websites:
-                 logger.warning(f"{url} is already in the database - skiping this download")
-                 continue
+                logger.warning(f"{url} is already in the database - skiping this download")
+                continue
 
             wget_download_page(new_website.url, args.files)
             chrome_screenshot(new_website.url, args.screenshots)
@@ -413,10 +411,10 @@ def main(args):
 
         with open(args.database, "w") as f:
             json.dump(db, f, indent=4)
-        # catch keyboard exit
 
     # Server
     else:
+
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 self.send_response(200)
@@ -431,24 +429,19 @@ def main(args):
                 logger.error(format % args)
 
         logger.info("Server at: " + SHELL_LINK_MASK.format(f"http://localhost:{args.port}", f"localhost:{args.port}"))
-        try:
-            HTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
-        except KeyboardInterrupt:
-            pass
-
-    logger.info("Bye!")
+        HTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
 
 
 if __name__ == "__main__":
     argsparser = argparse.ArgumentParser(
         prog="./python alexandria.py",
         description="Alexandria - Tool to download and browser your own internet backup",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     argsparser.add_argument("urls", help="One or multiple URLs to preserve", nargs="*")
 
     argsparser.add_argument("-p", "--port", help="Server HTTP port", default=8000, type=int)
-    argsparser.add_argument("-q", "--quiet", help="Keep quiet", action='store_false')
+    argsparser.add_argument("-q", "--quiet", help="Keep quiet", action="store_false")
     argsparser.add_argument("--deep", help="How deep should download", default=1, type=int)
 
     argsparser.add_argument("--index", help="Where generate HTML index.", default="./alx/index.html", type=Path)
@@ -458,4 +451,19 @@ if __name__ == "__main__":
     argsparser.add_argument("--screenshots", help="Path to screenshots dir.", default="./alx/screenshots", type=Path)
     args = argsparser.parse_args()
 
-    main(args)
+    try:
+        main(args)
+    except ExternalExecutableNotFound as err:
+        logger.error("Missing external executable:")
+        logger.error(err)
+    except StaticNotFound as err:
+        logger.error("Website is not compatible")
+        logger.error(err)
+    except URLInvalid as err:
+        logger.error("CLI args error:")
+        logger.error(err)
+    except KeyboardInterrupt:
+        logger.info("Close request...")
+        logger.info("Bye!")
+    except Exception as err:
+        logger.exception(err)
