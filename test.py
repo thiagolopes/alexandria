@@ -1,8 +1,6 @@
 import unittest
-from pathlib import Path
-from unittest import mock
 
-from alexandria import URL, ExternalDependencyNotFound, URLInvalid
+from alexandria import URL, URLInvalid
 
 ENCODE = "utf-8"
 HTML_CONTENT = "<html><head><title>Wikipedia - Python</title></head>\n"
