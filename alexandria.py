@@ -312,8 +312,6 @@ class Humanizer:
 
 
 def main(args):
-    if args.quiet:
-        logger.setLevel(logging.INFO)
     logger.info("Alexandria - Internet preservation")
 
     humanizer = Humanizer()
@@ -414,7 +412,6 @@ def main(args):
 
     # Server
     else:
-
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 self.send_response(200)
@@ -450,6 +447,9 @@ if __name__ == "__main__":
     argsparser.add_argument("--files", help="Path to websites dir.", default="./alx/websites", type=Path)
     argsparser.add_argument("--screenshots", help="Path to screenshots dir.", default="./alx/screenshots", type=Path)
     args = argsparser.parse_args()
+
+    if args.quiet:
+        logger.setLevel(logging.INFO)
 
     try:
         main(args)
